@@ -38,6 +38,7 @@ APPROVAL_REQUIRED_TOOLS: frozenset[str] = frozenset({
     "kill_process",
     "clear_app_cache",
     "restart_network_adapter",
+    "install_package",
 })
 
 

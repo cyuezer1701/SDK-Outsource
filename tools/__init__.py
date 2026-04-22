@@ -12,6 +12,7 @@ from tools.remediation import (
     kill_process,
     clear_app_cache,
     restart_network_adapter,
+    install_package,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "kill_process",
     "clear_app_cache",
     "restart_network_adapter",
+    "install_package",
 ]

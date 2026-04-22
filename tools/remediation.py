@@ -154,6 +154,34 @@ def restart_network_adapter(adapter_name: str, explanation: str) -> dict:
         return {"status": "error", "error": str(exc)}
 
 
+def install_package(package_name: str, explanation: str) -> dict:
+    """Install a software package via the system package manager.
+
+    Args:
+        package_name: Package name to install, e.g. 'curl', 'htop', 'nginx'.
+        explanation: Plain-language explanation shown to the user before approval.
+    """
+    system = platform.system()
+    try:
+        if system == "Windows":
+            result = subprocess.run(["winget", "--version"], capture_output=True)
+            if result.returncode == 0:
+                _run(f'winget install --id "{package_name}" --silent --accept-package-agreements --accept-source-agreements', timeout=120)
+                return {"status": "ok", "message": f"Package '{package_name}' installed via winget."}
+            else:
+                _run(f'choco install "{package_name}" -y', timeout=120)
+                return {"status": "ok", "message": f"Package '{package_name}' installed via chocolatey."}
+        elif system == "Darwin":
+            _run(f"brew install {package_name}", timeout=120)
+            return {"status": "ok", "message": f"Package '{package_name}' installed via Homebrew."}
+        else:
+            _run("apt-get update -qq", timeout=60)
+            _run(f"apt-get install -y {package_name}", timeout=120)
+            return {"status": "ok", "message": f"Package '{package_name}' installed via apt."}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

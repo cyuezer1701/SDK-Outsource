@@ -48,6 +48,7 @@ AVAILABLE REMEDIATION TOOLS (require employee approval before execution):
 - kill_process: force-quit a hung application
 - clear_app_cache: delete temporary cache files for an application
 - restart_network_adapter: disable and re-enable a network adapter
+- install_package: install a software package via apt/Homebrew/winget
 
 IMPORTANT: Always include a helpful 'explanation' parameter for remediation tools so the
 employee understands exactly what will happen before they approve."""
@@ -208,6 +209,24 @@ _TOOL_SCHEMAS: list[dict] = [
             "required": ["adapter_name", "explanation"],
         },
     },
+    {
+        "name": "install_package",
+        "description": "Install a software package using the system package manager (apt on Linux, Homebrew on macOS, winget on Windows). REQUIRES USER APPROVAL.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "package_name": {
+                    "type": "string",
+                    "description": "Package name to install, e.g. 'curl', 'htop', 'nginx', 'python3'.",
+                },
+                "explanation": {
+                    "type": "string",
+                    "description": "Plain-language explanation shown to the user before approval.",
+                },
+            },
+            "required": ["package_name", "explanation"],
+        },
+    },
 ]
 
 # Map tool name → callable
@@ -223,6 +242,7 @@ _TOOL_REGISTRY: dict[str, Any] = {
     "kill_process": tool_module.kill_process,
     "clear_app_cache": tool_module.clear_app_cache,
     "restart_network_adapter": tool_module.restart_network_adapter,
+    "install_package": tool_module.install_package,
 }
 
 # ---------------------------------------------------------------------------
