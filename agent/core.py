@@ -21,18 +21,19 @@ console = Console()
 # System prompt (stable — cached with cache_control)
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """You are an expert Linux IT support agent (Level 1 & 2).
+_SYSTEM_PROMPT = """You are an expert cross-platform IT support agent (Linux & Windows, Level 1 & 2).
 Your job is to diagnose IT problems step-by-step and fix them safely.
 
 RULES:
 1. Always start with READ-ONLY diagnostic tools to understand the system state first.
-2. Summarise findings in plain, non-technical language before proposing any fix.
+2. Summarise findings in 1-3 bullet points max — no paragraphs.
 3. For every remediation tool call, fill the 'explanation' field with a clear,
    jargon-free sentence describing what the action will do and why.
 4. Never skip the diagnostic phase — verify the problem before fixing it.
 5. After applying a fix, re-run diagnostic tools to confirm the problem is resolved.
 6. If you cannot fix the problem, tell the user what to escalate to IT and why.
-7. Keep responses concise and focused on the user's problem.
+7. Keep every text response under 5 sentences. Use bullet points if more detail is needed.
+   Never repeat what a tool already showed — just interpret and recommend.
 8. After clean_disk_space, always run get_disk_info before AND after to confirm space freed.
 9. Before manage_firewall_rule, always run check_firewall_status first.
 10. If get_failed_logins or get_active_sessions reveals suspicious activity, advise escalation to the security team.
@@ -45,6 +46,7 @@ Disk:     find_large_files, check_filesystem_health
 Hardware: get_hardware_info, get_disk_smart_status, get_temperatures, get_io_stats, get_memory_pressure
 Packages: get_package_info
 Services: get_service_logs, list_cron_jobs
+Windows:  list_windows_services, get_windows_event_log, get_registry_value, get_windows_network_info
 
 REMEDIATION TOOLS (require employee approval before execution):
 - flush_dns_cache, restart_service, kill_process, clear_app_cache, restart_network_adapter
@@ -292,6 +294,32 @@ _TOOL_SCHEMAS: list[dict] = [
     {"name": "list_cron_jobs", "description": "List crontab entries and systemd timers for a user or system-wide. Read-only.",
      "input_schema": {"type": "object", "properties": {
          "username": {"type": "string", "description": "Username to query (leave empty for current user)."}}, "required": []}},
+    # ---- WINDOWS DIAGNOSTICS -----------------------------------------------
+    {"name": "list_windows_services",
+     "description": "List Windows services with name, status (Running/Stopped) and start type. Windows only. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "filter": {"type": "string", "description": "Optional substring to match service name or display name."}},
+         "required": []}},
+    {"name": "get_windows_event_log",
+     "description": "Read recent Windows Event Log entries from System, Application or Security log. Windows only. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "log": {"type": "string", "enum": ["System", "Application", "Security"],
+                 "description": "Event log to query (default System)."},
+         "count": {"type": "integer", "description": "Number of entries (default 20)."},
+         "level": {"type": "string", "enum": ["Error", "Warning", "Information", ""],
+                   "description": "Filter by severity. Leave empty for all levels."}},
+         "required": []}},
+    {"name": "get_registry_value",
+     "description": "Read a Windows registry key or specific value (read-only). Windows only.",
+     "input_schema": {"type": "object", "properties": {
+         "key_path": {"type": "string",
+                      "description": "Full registry path, e.g. HKLM\\\\SOFTWARE\\\\Microsoft\\\\Windows NT\\\\CurrentVersion"},
+         "value_name": {"type": "string",
+                        "description": "Value name to query. Leave empty to list all values under the key."}},
+         "required": ["key_path"]}},
+    {"name": "get_windows_network_info",
+     "description": "Return Windows network configuration: adapters, IP addresses, DNS servers, active TCP connections. Windows only. Read-only.",
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
     # ---- NEW REMEDIATION ---------------------------------------------------
     {"name": "clean_disk_space", "description": "Free disk space by cleaning safe targets. REQUIRES USER APPROVAL.",
      "input_schema": {"type": "object", "properties": {
@@ -352,6 +380,10 @@ _TOOL_REGISTRY: dict[str, Any] = {
     "get_package_info": tool_module.get_package_info,
     "get_service_logs": tool_module.get_service_logs,
     "list_cron_jobs": tool_module.list_cron_jobs,
+    "list_windows_services": tool_module.list_windows_services,
+    "get_windows_event_log": tool_module.get_windows_event_log,
+    "get_registry_value": tool_module.get_registry_value,
+    "get_windows_network_info": tool_module.get_windows_network_info,
     "clean_disk_space": tool_module.clean_disk_space,
     "update_all_packages": tool_module.update_all_packages,
     "fix_broken_packages": tool_module.fix_broken_packages,

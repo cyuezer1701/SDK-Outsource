@@ -546,3 +546,109 @@ def list_cron_jobs(username: str = "") -> dict:
                 "system_cron_dirs": cron_d, "systemd_timers": timers}
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Windows-specific diagnostic tools
+# ---------------------------------------------------------------------------
+
+def list_windows_services(filter: str = "") -> dict:
+    """List Windows services with status and start type. Windows only."""
+    if platform.system() != "Windows":
+        return {"status": "error", "error": "Windows only"}
+    try:
+        if filter:
+            ps_cmd = (
+                "Get-Service"
+                " | Where-Object { $_.DisplayName -like '*" + filter + "*'"
+                " -or $_.Name -like '*" + filter + "*' }"
+                " | Select-Object Name,DisplayName,Status,StartType"
+                " | Format-Table -AutoSize | Out-String -Width 200"
+            )
+        else:
+            ps_cmd = (
+                "Get-Service"
+                " | Select-Object Name,DisplayName,Status,StartType"
+                " | Format-Table -AutoSize | Out-String -Width 200"
+            )
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=20,
+        )
+        out = (r.stdout + r.stderr).strip()
+        return {"status": "ok", "filter": filter or "(all)", "output": _trunc(out, 3000)}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
+def get_windows_event_log(log: str = "System", count: int = 20, level: str = "") -> dict:
+    """Read Windows Event Log entries (System/Application/Security). Windows only.
+
+    Args:
+        log: Log name — System, Application, or Security.
+        count: Number of recent entries to return (default 20).
+        level: Optional filter — Error, Warning, Information.
+    """
+    if platform.system() != "Windows":
+        return {"status": "error", "error": "Windows only"}
+    try:
+        level_filter = f" | Where-Object {{ $_.LevelDisplayName -eq '{level}' }}" if level else ""
+        cmd = (
+            f"Get-WinEvent -LogName '{log}' -MaxEvents {count * 3}{level_filter}"
+            f" | Select-Object -First {count} TimeCreated,LevelDisplayName,Id,Message"
+            " | Format-List | Out-String -Width 200"
+        )
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", cmd],
+            capture_output=True, text=True, timeout=30,
+        )
+        out = (r.stdout + r.stderr).strip()
+        if r.returncode != 0:
+            return {"status": "error", "error": out[-300:]}
+        return {"status": "ok", "log": log, "count": count, "output": _trunc(out, 4000)}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
+def get_registry_value(key_path: str, value_name: str = "") -> dict:
+    """Read a Windows registry key or value (read-only). Windows only.
+
+    Args:
+        key_path: Full registry path, e.g. HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion
+        value_name: Specific value name to query. Leave empty to list all values under the key.
+    """
+    if platform.system() != "Windows":
+        return {"status": "error", "error": "Windows only"}
+    try:
+        cmd = ["reg", "query", key_path]
+        if value_name:
+            cmd += ["/v", value_name]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        out = (r.stdout + r.stderr).strip()
+        if r.returncode != 0:
+            return {"status": "error", "error": out[-300:]}
+        return {"status": "ok", "key": key_path, "value": value_name or "(all)", "output": _trunc(out, 2000)}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
+def get_windows_network_info() -> dict:
+    """Return Windows network configuration: adapters, IPs, DNS, active connections. Windows only."""
+    if platform.system() != "Windows":
+        return {"status": "error", "error": "Windows only"}
+    try:
+        ipconfig = subprocess.run(
+            ["ipconfig", "/all"], capture_output=True, text=True, timeout=10,
+        )
+        netstat = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=15,
+        )
+        netstat_out = "\n".join(netstat.stdout.splitlines()[:40])
+        return {
+            "status": "ok",
+            "ipconfig": _trunc(ipconfig.stdout, 3000),
+            "netstat_top40": netstat_out,
+        }
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}

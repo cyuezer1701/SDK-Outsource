@@ -57,6 +57,11 @@ SAFE_TOOLS: frozenset[str] = frozenset({
     # Services & cron
     "get_service_logs",
     "list_cron_jobs",
+    # Windows diagnostics
+    "list_windows_services",
+    "get_windows_event_log",
+    "get_registry_value",
+    "get_windows_network_info",
 })
 
 # Tool names that modify system state — require human confirmation

@@ -6,16 +6,25 @@ import datetime
 import os
 import queue
 import random
+import sys
 import threading
 import time
 
 import customtkinter as ctk
 import psutil
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 from agent.core import run_agent
 
 load_dotenv()
+
+# ── Font scaling ────────────────────────────────────────────────────────────
+_FONT_SCALE: float = float(os.environ.get("FONT_SCALE", "1.0"))
+
+
+def _f(size: int) -> int:
+    """Return font size scaled by _FONT_SCALE, minimum 8."""
+    return max(8, round(size * _FONT_SCALE))
 
 # ── Design tokens ──────────────────────────────────────────────────────────
 BG      = "#080C18"
@@ -58,17 +67,17 @@ class ApprovalDialog(ctk.CTkToplevel):
         body.pack(fill="both", expand=True, padx=24, pady=18)
 
         ctk.CTkLabel(body, text="⚡  AKTION ERFORDERLICH",
-                     font=ctk.CTkFont(family="monospace", size=13, weight="bold"),
+                     font=ctk.CTkFont(family="monospace", size=_f(13), weight="bold"),
                      text_color=YELLOW).pack(anchor="w", pady=(0, 10))
 
         ctk.CTkLabel(body, text=explanation,
-                     font=ctk.CTkFont(size=12), text_color=TEXT,
+                     font=ctk.CTkFont(size=_f(12)), text_color=TEXT,
                      wraplength=500, justify="left").pack(anchor="w", pady=(0, 12))
 
         chip = ctk.CTkFrame(body, fg_color=SURFACE, corner_radius=6)
         chip.pack(fill="x", pady=(0, 18))
         ctk.CTkLabel(chip, text=f"  $ {tech_detail}",
-                     font=ctk.CTkFont(family="monospace", size=11),
+                     font=ctk.CTkFont(family="monospace", size=_f(11)),
                      text_color=CYAN).pack(anchor="w", padx=12, pady=7)
 
         btns = ctk.CTkFrame(body, fg_color="transparent")
@@ -78,14 +87,14 @@ class ApprovalDialog(ctk.CTkToplevel):
                       fg_color="#0A3D20", hover_color="#072D17",
                       text_color=GREEN, border_color=GREEN, border_width=1,
                       width=165, height=40, corner_radius=8,
-                      font=ctk.CTkFont(size=12, weight="bold"),
+                      font=ctk.CTkFont(size=_f(12), weight="bold"),
                       command=self._approve).pack(side="left", padx=(0, 12))
 
         ctk.CTkButton(btns, text="✗  Abbrechen (Esc)",
                       fg_color="#3D0A10", hover_color="#2D0509",
                       text_color=RED, border_color=RED, border_width=1,
                       width=165, height=40, corner_radius=8,
-                      font=ctk.CTkFont(size=12, weight="bold"),
+                      font=ctk.CTkFont(size=_f(12), weight="bold"),
                       command=self._deny).pack(side="left")
 
     def _approve(self):
@@ -118,7 +127,7 @@ class Toast(ctk.CTkToplevel):
 
         ctk.CTkFrame(self, height=3, fg_color=color, corner_radius=0).pack(fill="x")
         ctk.CTkLabel(self, text=f"  {icon}  {message}  ",
-                     font=ctk.CTkFont(size=12), text_color=TEXT,
+                     font=ctk.CTkFont(size=_f(12)), text_color=TEXT,
                      padx=8, pady=10).pack()
 
         # Position top-right
@@ -137,7 +146,8 @@ class ServiceDeskApp(ctk.CTk):
         self.configure(fg_color=BG)
         self.title("IT Service Desk  ·  AI-Powered")
         self.geometry("1160x760")
-        self.minsize(820, 520)
+        self.minsize(960 if _FONT_SCALE > 1.0 else 820,
+                     600 if _FONT_SCALE > 1.0 else 520)
 
         self._queue: queue.Queue = queue.Queue()
         self._history: list[dict] = []
@@ -183,7 +193,7 @@ class ServiceDeskApp(ctk.CTk):
         self._toggle_btn = ctk.CTkButton(
             left, text="◀", width=28, height=28, corner_radius=6,
             fg_color=SURFACE, hover_color=BORDER, text_color=MUTED,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=_f(12)),
             command=self._toggle_sidebar,
         )
         self._toggle_btn.pack(side="left", padx=(0, 10))
@@ -193,11 +203,11 @@ class ServiceDeskApp(ctk.CTk):
         self._dot.pack(side="left", padx=(0, 10))
 
         ctk.CTkLabel(left, text="IT SERVICE DESK",
-                     font=ctk.CTkFont(family="monospace", size=15, weight="bold"),
+                     font=ctk.CTkFont(family="monospace", size=_f(15), weight="bold"),
                      text_color=CYAN).pack(side="left")
 
         ctk.CTkLabel(left, text="  ·  AI-Powered Support",
-                     font=ctk.CTkFont(size=12), text_color=MUTED).pack(side="left")
+                     font=ctk.CTkFont(size=_f(12)), text_color=MUTED).pack(side="left")
 
         right = ctk.CTkFrame(h, fg_color="transparent")
         right.pack(side="right", padx=16)
@@ -208,7 +218,7 @@ class ServiceDeskApp(ctk.CTk):
             f = ctk.CTkFrame(right, fg_color="transparent")
             f.pack(side="right", padx=6)
             ctk.CTkLabel(f, text=label,
-                         font=ctk.CTkFont(family="monospace", size=9),
+                         font=ctk.CTkFont(family="monospace", size=_f(9)),
                          text_color=MUTED).pack()
             dot = ctk.CTkFrame(f, width=10, height=10, corner_radius=5,
                                 fg_color=GREEN)
@@ -220,7 +230,7 @@ class ServiceDeskApp(ctk.CTk):
 
         self._ticket_lbl = ctk.CTkLabel(
             right, text=f"{self._ticket_id}  {self._ticket_status}",
-            font=ctk.CTkFont(family="monospace", size=11, weight="bold"),
+            font=ctk.CTkFont(family="monospace", size=_f(11), weight="bold"),
             text_color=YELLOW)
         self._ticket_lbl.pack(side="right", padx=8)
 
@@ -228,7 +238,7 @@ class ServiceDeskApp(ctk.CTk):
             side="right", fill="y", pady=8, padx=8)
 
         self._clock = ctk.CTkLabel(right, text="",
-                                    font=ctk.CTkFont(family="monospace", size=11),
+                                    font=ctk.CTkFont(family="monospace", size=_f(11)),
                                     text_color=MUTED)
         self._clock.pack(side="right", padx=4)
         self._tick()
@@ -244,7 +254,7 @@ class ServiceDeskApp(ctk.CTk):
 
         def section(text):
             ctk.CTkLabel(self._sidebar, text=text,
-                         font=ctk.CTkFont(family="monospace", size=9, weight="bold"),
+                         font=ctk.CTkFont(family="monospace", size=_f(9), weight="bold"),
                          text_color=MUTED).pack(anchor="w", padx=16, pady=(16, 5))
 
         section("SYSTEM STATUS")
@@ -256,10 +266,10 @@ class ServiceDeskApp(ctk.CTk):
             row = ctk.CTkFrame(card, fg_color="transparent")
             row.pack(fill="x", padx=10, pady=(8, 2))
             ctk.CTkLabel(row, text=label,
-                         font=ctk.CTkFont(family="monospace", size=10, weight="bold"),
+                         font=ctk.CTkFont(family="monospace", size=_f(10), weight="bold"),
                          text_color=TEXT).pack(side="left")
             val = ctk.CTkLabel(row, text="—",
-                                font=ctk.CTkFont(family="monospace", size=10),
+                                font=ctk.CTkFont(family="monospace", size=_f(10)),
                                 text_color=color)
             val.pack(side="right")
             bar = ctk.CTkProgressBar(card, height=3, corner_radius=2,
@@ -284,7 +294,7 @@ class ServiceDeskApp(ctk.CTk):
             ctk.CTkButton(self._sidebar, text=icon_label,
                           fg_color=SURFACE, hover_color=BORDER,
                           text_color=TEXT, anchor="w", height=32, corner_radius=6,
-                          font=ctk.CTkFont(size=12),
+                          font=ctk.CTkFont(size=_f(12)),
                           command=lambda p=prompt: self._quick(p)).pack(
                 fill="x", padx=12, pady=2)
 
@@ -294,16 +304,41 @@ class ServiceDeskApp(ctk.CTk):
         section("SESSION")
         self._session_lbl = ctk.CTkLabel(
             self._sidebar, text="Nachrichten: 0",
-            font=ctk.CTkFont(family="monospace", size=10), text_color=MUTED)
+            font=ctk.CTkFont(family="monospace", size=_f(10)), text_color=MUTED)
         self._session_lbl.pack(anchor="w", padx=16)
 
         ctk.CTkButton(
             self._sidebar, text="＋  Neue Anfrage",
             fg_color=SURFACE, hover_color=BORDER,
             text_color=CYAN, anchor="w", height=32, corner_radius=6,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=_f(12)),
             command=self._new_session,
         ).pack(fill="x", padx=12, pady=(8, 4))
+
+        ctk.CTkFrame(self._sidebar, height=1, fg_color=BORDER).pack(
+            fill="x", padx=12, pady=12)
+
+        section("SCHRIFTGRÖSSE")
+        font_row = ctk.CTkFrame(self._sidebar, fg_color="transparent")
+        font_row.pack(fill="x", padx=12, pady=(0, 8))
+        for label, scale in [("A−", 0.85), ("A", 1.0), ("A+", 1.2), ("A++", 1.4)]:
+            active = abs(_FONT_SCALE - scale) < 0.05
+            ctk.CTkButton(
+                font_row, text=label,
+                fg_color=CYAN if active else SURFACE,
+                hover_color="#00AACC" if active else BORDER,
+                text_color="#000000" if active else TEXT,
+                width=46, height=30, corner_radius=6,
+                font=ctk.CTkFont(size=_f(11), weight="bold"),
+                command=lambda s=scale: self._set_font_scale(s),
+            ).pack(side="left", padx=2)
+
+    def _set_font_scale(self, scale: float) -> None:
+        if self._busy:
+            return
+        env_path = os.path.join(os.path.dirname(__file__), ".env")
+        set_key(env_path, "FONT_SCALE", str(scale))
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
     def _toggle_sidebar(self):
         if self._sidebar_visible:
@@ -336,7 +371,7 @@ class ServiceDeskApp(ctk.CTk):
         self._entry = ctk.CTkEntry(
             bar,
             placeholder_text="Problem beschreiben…  (Ctrl+L = Neue Anfrage)",
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=_f(13)),
             fg_color=SURFACE, border_color=BORDER, text_color=TEXT,
             height=46, corner_radius=10)
         self._entry.grid(row=0, column=0, padx=(16, 10), pady=16, sticky="ew")
@@ -345,7 +380,7 @@ class ServiceDeskApp(ctk.CTk):
         self._btn = ctk.CTkButton(
             bar, text="▶", fg_color=CYAN, hover_color="#00AACC",
             text_color="#000000", width=54, height=46, corner_radius=10,
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=ctk.CTkFont(size=_f(16), weight="bold"),
             command=self._send)
         self._btn.grid(row=0, column=1, padx=(0, 16), pady=16)
 
@@ -374,13 +409,13 @@ class ServiceDeskApp(ctk.CTk):
                       padx=(60 if is_user else 2, 2 if is_user else 60))
 
         ctk.CTkLabel(meta_row, text=f"{icon}  {name}   {now}",
-                     font=ctk.CTkFont(size=10), text_color=MUTED).pack(side="left")
+                     font=ctk.CTkFont(size=_f(10)), text_color=MUTED).pack(side="left")
 
         # Copy button (small, appears inline)
         copy_btn = ctk.CTkButton(
             meta_row, text="⎘", width=22, height=18,
             fg_color="transparent", hover_color=SURFACE,
-            text_color=MUTED, font=ctk.CTkFont(size=10),
+            text_color=MUTED, font=ctk.CTkFont(size=_f(10)),
             command=lambda t=text: self._copy(t))
         copy_btn.pack(side="left", padx=(6, 0))
 
@@ -389,7 +424,7 @@ class ServiceDeskApp(ctk.CTk):
 
         bubble = ctk.CTkTextbox(
             outer, wrap="word", fg_color=bg, text_color=fg,
-            font=ctk.CTkFont(size=12), height=h,
+            font=ctk.CTkFont(size=_f(12)), height=h,
             activate_scrollbars=False, border_spacing=12,
             border_color=BORDER, border_width=1, corner_radius=12)
         bubble.insert("1.0", text)
@@ -413,7 +448,7 @@ class ServiceDeskApp(ctk.CTk):
         f.pack(anchor="w", padx=16, pady=5)
         f._is_thinking = True  # type: ignore[attr-defined]
         lbl = ctk.CTkLabel(f, text="🤖  ● ● ●",
-                           font=ctk.CTkFont(family="monospace", size=12),
+                           font=ctk.CTkFont(family="monospace", size=_f(12)),
                            text_color=CYAN)
         lbl.pack(padx=18, pady=12)
         self._thinking_frame = f

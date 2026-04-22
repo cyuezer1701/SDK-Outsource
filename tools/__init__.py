@@ -29,6 +29,11 @@ from tools.diagnostic import (
     # Phase 6 — Services & Cron
     get_service_logs,
     list_cron_jobs,
+    # Windows diagnostics
+    list_windows_services,
+    get_windows_event_log,
+    get_registry_value,
+    get_windows_network_info,
 )
 from tools.remediation import (
     flush_dns_cache,
@@ -62,6 +67,9 @@ __all__ = [
     "get_package_info",
     # Services & Cron
     "get_service_logs", "list_cron_jobs",
+    # Windows diagnostics
+    "list_windows_services", "get_windows_event_log",
+    "get_registry_value", "get_windows_network_info",
     # Original remediation
     "flush_dns_cache", "restart_service", "kill_process",
     "clear_app_cache", "restart_network_adapter", "install_package",
