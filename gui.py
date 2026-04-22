@@ -560,6 +560,8 @@ class ServiceDeskApp(ctk.CTk):
                     self._set_ticket_status("✓ GELÖST", GREEN)
         except queue.Empty:
             pass
+        except Exception:
+            pass
         self.after(100, self._poll)
 
     # ── Live system stats ─────────────────────────────────────────────────
@@ -571,7 +573,7 @@ class ServiceDeskApp(ctk.CTk):
                     cpu  = psutil.cpu_percent(interval=1)
                     ram  = psutil.virtual_memory().percent
                     disk = psutil.disk_usage("/").percent
-                    self._queue.put(("stats", None, cpu, ram, disk))
+                    self._queue.put(("stats", cpu, ram, disk))
                 except Exception:
                     pass
                 time.sleep(3)
