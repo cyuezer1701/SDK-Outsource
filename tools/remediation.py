@@ -209,6 +209,126 @@ def install_package(package_name: str, explanation: str = "") -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3, 5, 6, 7 — New Linux remediation tools
+# ---------------------------------------------------------------------------
+
+def clean_disk_space(targets: list, explanation: str = "") -> dict:
+    """Free disk space by cleaning well-defined safe targets.
+
+    Valid targets: 'apt_cache', 'old_logs', 'tmp_files', 'old_kernels'
+    """
+    prefix = "" if os.geteuid() == 0 else "sudo "
+    valid = {"apt_cache", "old_logs", "tmp_files", "old_kernels"}
+    bad = [t for t in targets if t not in valid]
+    if bad:
+        return {"status": "error",
+                "error": f"Unknown targets: {bad}. Valid: {sorted(valid)}"}
+
+    results = {}
+    commands = {
+        "apt_cache":   f"{prefix}apt-get clean -y && {prefix}apt-get autoremove -y",
+        "old_logs":    f"{prefix}journalctl --vacuum-time=7d && "
+                       f"{prefix}find /var/log -name '*.gz' -delete 2>/dev/null; true",
+        "tmp_files":   f"{prefix}find /tmp -type f -atime +7 -delete 2>/dev/null; true",
+        "old_kernels": f"{prefix}apt-get autoremove --purge -y",
+    }
+    for t in targets:
+        r = subprocess.run(commands[t], shell=True, capture_output=True,
+                           text=True, timeout=120)
+        out = (r.stdout + r.stderr).strip()
+        results[t] = "ok" if r.returncode == 0 else f"error: {out[-200:]}"
+
+    return {"status": "ok", "cleaned": results}
+
+
+def update_all_packages(explanation: str = "") -> dict:
+    """Run apt-get update + upgrade to apply all available updates."""
+    prefix = "" if os.geteuid() == 0 else "sudo "
+    try:
+        r = subprocess.run(
+            f"{prefix}apt-get update -qq && "
+            f"{prefix}DEBIAN_FRONTEND=noninteractive apt-get upgrade -y",
+            shell=True, capture_output=True, text=True, timeout=600,
+        )
+        out = (r.stdout + r.stderr).strip()
+        if r.returncode != 0:
+            return {"status": "error", "error": out[-500:]}
+        return {"status": "ok", "message": "All packages updated.", "output": out[-400:]}
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "error": "Update timed out after 10 minutes."}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
+def fix_broken_packages(explanation: str = "") -> dict:
+    """Resolve broken dpkg/apt state after interrupted installations."""
+    prefix = "" if os.geteuid() == 0 else "sudo "
+    try:
+        r = subprocess.run(
+            f"{prefix}DEBIAN_FRONTEND=noninteractive apt-get install -f -y && "
+            f"{prefix}dpkg --configure -a",
+            shell=True, capture_output=True, text=True, timeout=300,
+        )
+        out = (r.stdout + r.stderr).strip()
+        if r.returncode != 0:
+            return {"status": "error", "error": out[-500:]}
+        return {"status": "ok", "message": "Broken packages fixed.", "output": out[-400:]}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
+def set_service_autostart(service_name: str, enabled: bool, explanation: str = "") -> dict:
+    """Enable or disable a systemd service's autostart on boot."""
+    prefix = "" if os.geteuid() == 0 else "sudo "
+    action = "enable" if enabled else "disable"
+    try:
+        r = subprocess.run(
+            f"{prefix}systemctl {action} {service_name}",
+            shell=True, capture_output=True, text=True, timeout=15,
+        )
+        out = (r.stdout + r.stderr).strip()
+        if r.returncode != 0:
+            return {"status": "error", "error": out}
+        return {"status": "ok",
+                "message": f"Service '{service_name}' {'enabled' if enabled else 'disabled'} on boot.",
+                "output": out}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
+def manage_firewall_rule(
+    action: str,
+    port: int,
+    protocol: str = "tcp",
+    comment: str = "",
+    explanation: str = "",
+) -> dict:
+    """Add or remove a UFW firewall rule for a specific port."""
+    if action not in ("allow", "deny", "delete"):
+        return {"status": "error",
+                "error": f"Invalid action '{action}'. Use: allow, deny, delete."}
+    prefix = "" if os.geteuid() == 0 else "sudo "
+    try:
+        if action == "delete":
+            cmd = f"{prefix}ufw delete allow {port}/{protocol} 2>/dev/null || " \
+                  f"{prefix}ufw delete deny {port}/{protocol}"
+        else:
+            comment_part = f" comment '{comment}'" if comment else ""
+            cmd = f"{prefix}ufw {action} {port}/{protocol}{comment_part}"
+
+        r = subprocess.run(cmd, shell=True, capture_output=True,
+                           text=True, timeout=15)
+        out = (r.stdout + r.stderr).strip()
+        if r.returncode != 0:
+            return {"status": "error", "error": out}
+        return {"status": "ok",
+                "message": f"Firewall rule {action} {port}/{protocol} applied.",
+                "output": out}
+    except Exception as exc:
+        return {"status": "error", "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

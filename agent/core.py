@@ -21,37 +21,41 @@ console = Console()
 # System prompt (stable — cached with cache_control)
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """You are an expert IT support agent running directly on the employee's laptop.
+_SYSTEM_PROMPT = """You are an expert Linux IT support agent (Level 1 & 2).
 Your job is to diagnose IT problems step-by-step and fix them safely.
 
 RULES:
 1. Always start with READ-ONLY diagnostic tools to understand the system state first.
-2. Summarise your findings in plain, non-technical language before proposing any fix.
-3. For every remediation tool call you must fill the 'explanation' field with a clear,
+2. Summarise findings in plain, non-technical language before proposing any fix.
+3. For every remediation tool call, fill the 'explanation' field with a clear,
    jargon-free sentence describing what the action will do and why.
 4. Never skip the diagnostic phase — verify the problem before fixing it.
 5. After applying a fix, re-run diagnostic tools to confirm the problem is resolved.
 6. If you cannot fix the problem, tell the user what to escalate to IT and why.
-7. Keep your responses concise and focused on the employee's problem.
+7. Keep responses concise and focused on the user's problem.
+8. After clean_disk_space, always run get_disk_info before AND after to confirm space freed.
+9. Before manage_firewall_rule, always run check_firewall_status first.
+10. If get_failed_logins or get_active_sessions reveals suspicious activity, advise escalation to the security team.
 
-AVAILABLE DIAGNOSTIC TOOLS (auto-execute, read-only):
-- get_system_info: OS, CPU, RAM, uptime
-- get_running_processes: list processes (optional name filter)
-- get_network_info: IP addresses, DNS, connectivity test
-- get_disk_info: disk space on all drives
-- get_services_status: check whether services are running
-- read_event_log: recent system/application log entries
+DIAGNOSTIC TOOLS (auto-execute, read-only):
+System:   get_system_info, get_running_processes, get_disk_info, get_services_status, read_event_log
+Network:  get_network_info, ping_host, dns_lookup, check_open_ports, check_firewall_status, get_vpn_status
+Security: get_failed_logins, get_active_sessions, get_last_logins
+Disk:     find_large_files, check_filesystem_health
+Hardware: get_hardware_info, get_disk_smart_status, get_temperatures, get_io_stats, get_memory_pressure
+Packages: get_package_info
+Services: get_service_logs, list_cron_jobs
 
-AVAILABLE REMEDIATION TOOLS (require employee approval before execution):
-- flush_dns_cache: clear the DNS resolver cache
-- restart_service: stop and restart a system service
-- kill_process: force-quit a hung application
-- clear_app_cache: delete temporary cache files for an application
-- restart_network_adapter: disable and re-enable a network adapter
-- install_package: install a software package via apt/Homebrew/winget
+REMEDIATION TOOLS (require employee approval before execution):
+- flush_dns_cache, restart_service, kill_process, clear_app_cache, restart_network_adapter
+- install_package: install via apt/brew/winget
+- clean_disk_space: free disk (targets: apt_cache, old_logs, tmp_files, old_kernels)
+- update_all_packages: apt update + upgrade
+- fix_broken_packages: apt install -f + dpkg --configure -a
+- set_service_autostart: systemctl enable/disable
+- manage_firewall_rule: ufw allow/deny/delete a port
 
-IMPORTANT: Always include a helpful 'explanation' parameter for remediation tools so the
-employee understands exactly what will happen before they approve."""
+IMPORTANT: Always include a helpful 'explanation' parameter for all remediation tools."""
 
 # ---------------------------------------------------------------------------
 # Claude API tool schemas
@@ -227,6 +231,92 @@ _TOOL_SCHEMAS: list[dict] = [
             "required": ["package_name", "explanation"],
         },
     },
+    # ---- NETWORK DIAGNOSTICS -----------------------------------------------
+    {"name": "ping_host", "description": "Ping a host to test reachability and measure latency. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "host": {"type": "string", "description": "Hostname or IP to ping."},
+         "count": {"type": "integer", "description": "Number of pings (default 4)."}}, "required": ["host"]}},
+    {"name": "dns_lookup", "description": "Resolve a hostname via DNS (A/AAAA/MX/CNAME). Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "hostname": {"type": "string"},
+         "record_type": {"type": "string", "enum": ["A","AAAA","MX","CNAME","TXT"], "description": "DNS record type (default A)."}}, "required": ["hostname"]}},
+    {"name": "check_open_ports", "description": "Test TCP reachability of specific ports on a host. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "host": {"type": "string"},
+         "ports": {"type": "array", "items": {"type": "integer"}, "description": "List of ports to test, e.g. [80, 443, 8080]."}}, "required": ["host", "ports"]}},
+    {"name": "check_firewall_status", "description": "Show current UFW/iptables firewall rules. Read-only.",
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_vpn_status", "description": "Check whether any VPN tunnel (tun/wg/OpenVPN) is active. Read-only.",
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
+    # ---- SECURITY AUDIT ----------------------------------------------------
+    {"name": "get_failed_logins", "description": "Show recent failed SSH/PAM login attempts with source IPs. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "count": {"type": "integer", "description": "Number of recent failures to return (default 20)."}}, "required": []}},
+    {"name": "get_active_sessions", "description": "List all currently logged-in users and active TCP connections. Read-only.",
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_last_logins", "description": "Show login history for a user or the whole system. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "username": {"type": "string", "description": "Username to filter (leave empty for all users)."},
+         "count": {"type": "integer", "description": "Number of entries (default 10)."}}, "required": []}},
+    # ---- DISK ---------------------------------------------------------------
+    {"name": "find_large_files", "description": "Find the largest files under a path. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "path": {"type": "string", "description": "Root path to search (default '/')."},
+         "min_size_mb": {"type": "integer", "description": "Minimum file size in MB (default 100)."},
+         "count": {"type": "integer", "description": "Number of results (default 20)."}}, "required": []}},
+    {"name": "check_filesystem_health", "description": "Report filesystem type, last check and error counts. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "device": {"type": "string", "description": "Block device path e.g. /dev/sda1. Leave empty for overview."}}, "required": []}},
+    # ---- HARDWARE & PERFORMANCE --------------------------------------------
+    {"name": "get_hardware_info", "description": "Return CPU model, RAM DIMMs, USB and PCI devices. Read-only.",
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_disk_smart_status", "description": "Read SMART health for a storage drive. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "device": {"type": "string", "description": "Block device e.g. /dev/sda. Leave empty to list drives."}}, "required": []}},
+    {"name": "get_temperatures", "description": "Report CPU, GPU and drive temperatures. Read-only.",
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
+    {"name": "get_io_stats", "description": "Measure per-disk I/O utilization and CPU I/O wait. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "duration_seconds": {"type": "integer", "description": "Sample window in seconds (default 3)."}}, "required": []}},
+    {"name": "get_memory_pressure", "description": "Detailed RAM/swap breakdown, top memory consumers, OOM events. Read-only.",
+     "input_schema": {"type": "object", "properties": {}, "required": []}},
+    # ---- PACKAGES ----------------------------------------------------------
+    {"name": "get_package_info", "description": "Show installed version, available version and upgrade status of a package. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "package_name": {"type": "string"}}, "required": ["package_name"]}},
+    # ---- SERVICES & CRON ---------------------------------------------------
+    {"name": "get_service_logs", "description": "Return recent journald log lines for a systemd service. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "service_name": {"type": "string", "description": "systemd service name, e.g. 'nginx', 'sshd'."},
+         "count": {"type": "integer", "description": "Number of log lines (default 50)."}}, "required": ["service_name"]}},
+    {"name": "list_cron_jobs", "description": "List crontab entries and systemd timers for a user or system-wide. Read-only.",
+     "input_schema": {"type": "object", "properties": {
+         "username": {"type": "string", "description": "Username to query (leave empty for current user)."}}, "required": []}},
+    # ---- NEW REMEDIATION ---------------------------------------------------
+    {"name": "clean_disk_space", "description": "Free disk space by cleaning safe targets. REQUIRES USER APPROVAL.",
+     "input_schema": {"type": "object", "properties": {
+         "targets": {"type": "array", "items": {"type": "string",
+             "enum": ["apt_cache", "old_logs", "tmp_files", "old_kernels"]},
+             "description": "Which targets to clean."},
+         "explanation": {"type": "string"}}, "required": ["targets", "explanation"]}},
+    {"name": "update_all_packages", "description": "Run apt update + upgrade to apply all available updates. REQUIRES USER APPROVAL.",
+     "input_schema": {"type": "object", "properties": {
+         "explanation": {"type": "string"}}, "required": ["explanation"]}},
+    {"name": "fix_broken_packages", "description": "Fix broken dpkg/apt state. REQUIRES USER APPROVAL.",
+     "input_schema": {"type": "object", "properties": {
+         "explanation": {"type": "string"}}, "required": ["explanation"]}},
+    {"name": "set_service_autostart", "description": "Enable or disable a service's autostart on boot. REQUIRES USER APPROVAL.",
+     "input_schema": {"type": "object", "properties": {
+         "service_name": {"type": "string"},
+         "enabled": {"type": "boolean", "description": "true = enable, false = disable"},
+         "explanation": {"type": "string"}}, "required": ["service_name", "enabled", "explanation"]}},
+    {"name": "manage_firewall_rule", "description": "Add or remove a UFW firewall rule. REQUIRES USER APPROVAL.",
+     "input_schema": {"type": "object", "properties": {
+         "action": {"type": "string", "enum": ["allow", "deny", "delete"]},
+         "port": {"type": "integer"},
+         "protocol": {"type": "string", "enum": ["tcp", "udp"], "description": "Default tcp."},
+         "comment": {"type": "string", "description": "Optional rule label."},
+         "explanation": {"type": "string"}}, "required": ["action", "port", "explanation"]}},
 ]
 
 # Map tool name → callable
@@ -243,6 +333,30 @@ _TOOL_REGISTRY: dict[str, Any] = {
     "clear_app_cache": tool_module.clear_app_cache,
     "restart_network_adapter": tool_module.restart_network_adapter,
     "install_package": tool_module.install_package,
+    # New tools
+    "ping_host": tool_module.ping_host,
+    "dns_lookup": tool_module.dns_lookup,
+    "check_open_ports": tool_module.check_open_ports,
+    "check_firewall_status": tool_module.check_firewall_status,
+    "get_vpn_status": tool_module.get_vpn_status,
+    "get_failed_logins": tool_module.get_failed_logins,
+    "get_active_sessions": tool_module.get_active_sessions,
+    "get_last_logins": tool_module.get_last_logins,
+    "find_large_files": tool_module.find_large_files,
+    "check_filesystem_health": tool_module.check_filesystem_health,
+    "get_hardware_info": tool_module.get_hardware_info,
+    "get_disk_smart_status": tool_module.get_disk_smart_status,
+    "get_temperatures": tool_module.get_temperatures,
+    "get_io_stats": tool_module.get_io_stats,
+    "get_memory_pressure": tool_module.get_memory_pressure,
+    "get_package_info": tool_module.get_package_info,
+    "get_service_logs": tool_module.get_service_logs,
+    "list_cron_jobs": tool_module.list_cron_jobs,
+    "clean_disk_space": tool_module.clean_disk_space,
+    "update_all_packages": tool_module.update_all_packages,
+    "fix_broken_packages": tool_module.fix_broken_packages,
+    "set_service_autostart": tool_module.set_service_autostart,
+    "manage_firewall_rule": tool_module.manage_firewall_rule,
 }
 
 # ---------------------------------------------------------------------------
@@ -423,11 +537,16 @@ def _dispatch_tool(
 def _format_tech_detail(name: str, inputs: dict) -> str:
     """Return a short technical summary of what the tool call will do."""
     detail_map = {
-        "flush_dns_cache": "ipconfig /flushdns  (or equivalent on macOS/Linux)",
-        "restart_service": f"Restart-Service '{inputs.get('service_name', '?')}'",
-        "kill_process": f"taskkill /IM '{inputs.get('process_name', '?')}' /F  (or pkill)",
-        "clear_app_cache": f"Delete cache folder for {inputs.get('app_name', '?')}",
-        "restart_network_adapter": f"Disable/Enable adapter '{inputs.get('adapter_name', '?')}'",
-        "install_package": f"apt-get install -y {inputs.get('package_name', '?')}",
+        "flush_dns_cache":        "systemd-resolve --flush-caches  (or dscacheutil / ipconfig /flushdns)",
+        "restart_service":        f"systemctl restart {inputs.get('service_name', '?')}",
+        "kill_process":           f"pkill '{inputs.get('process_name', '?')}'  (or taskkill)",
+        "clear_app_cache":        f"rm -rf <cache dir for {inputs.get('app_name', '?')}>",
+        "restart_network_adapter":f"ip link set {inputs.get('adapter_name', '?')} down/up",
+        "install_package":        f"apt-get install -y {inputs.get('package_name', '?')}",
+        "clean_disk_space":       f"Clean targets: {inputs.get('targets', [])}",
+        "update_all_packages":    "apt-get update && apt-get upgrade -y",
+        "fix_broken_packages":    "apt-get install -f && dpkg --configure -a",
+        "set_service_autostart":  f"systemctl {'enable' if inputs.get('enabled') else 'disable'} {inputs.get('service_name', '?')}",
+        "manage_firewall_rule":   f"ufw {inputs.get('action','?')} {inputs.get('port','?')}/{inputs.get('protocol','tcp')}",
     }
     return detail_map.get(name, name)
