@@ -162,24 +162,48 @@ def install_package(package_name: str, explanation: str) -> dict:
         explanation: Plain-language explanation shown to the user before approval.
     """
     system = platform.system()
+    prefix = "" if (system != "Linux" or os.geteuid() == 0) else "sudo "
+
     try:
         if system == "Windows":
-            result = subprocess.run(["winget", "--version"], capture_output=True)
-            if result.returncode == 0:
-                _run(f'winget install --id "{package_name}" --silent --accept-package-agreements --accept-source-agreements', timeout=120)
-                return {"status": "ok", "message": f"Package '{package_name}' installed via winget."}
-            else:
-                _run(f'choco install "{package_name}" -y', timeout=120)
-                return {"status": "ok", "message": f"Package '{package_name}' installed via chocolatey."}
+            r = subprocess.run(["winget", "--version"], capture_output=True)
+            mgr = "winget" if r.returncode == 0 else "choco"
+            cmd = (
+                f'winget install --id "{package_name}" --silent '
+                f'--accept-package-agreements --accept-source-agreements'
+                if mgr == "winget"
+                else f'choco install "{package_name}" -y'
+            )
+            r2 = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
+            out = (r2.stdout + r2.stderr).strip()
+            if r2.returncode != 0:
+                return {"status": "error", "error": out}
+            return {"status": "ok", "message": f"Package '{package_name}' installed via {mgr}.", "output": out[-300:]}
+
         elif system == "Darwin":
-            _run(f"brew install {package_name}", timeout=120)
-            return {"status": "ok", "message": f"Package '{package_name}' installed via Homebrew."}
+            r = subprocess.run(f"brew install {package_name}", shell=True,
+                               capture_output=True, text=True, timeout=300)
+            out = (r.stdout + r.stderr).strip()
+            if r.returncode != 0:
+                return {"status": "error", "error": out}
+            return {"status": "ok", "message": f"Package '{package_name}' installed via Homebrew.", "output": out[-300:]}
+
         else:
-            # Use sudo if not already root
-            prefix = "" if os.geteuid() == 0 else "sudo "
-            _run(f"{prefix}apt-get update -qq", timeout=60)
-            output = _run(f"{prefix}DEBIAN_FRONTEND=noninteractive apt-get install -y {package_name}", timeout=900)
-            return {"status": "ok", "message": f"Package '{package_name}' installed via apt.", "output": output}
+            # Update package list (non-fatal)
+            subprocess.run(f"{prefix}apt-get update -qq",
+                           shell=True, capture_output=True, text=True, timeout=60)
+            # Install
+            r = subprocess.run(
+                f"{prefix}DEBIAN_FRONTEND=noninteractive apt-get install -y {package_name}",
+                shell=True, capture_output=True, text=True, timeout=900,
+            )
+            out = (r.stdout + r.stderr).strip()
+            if r.returncode != 0:
+                return {"status": "error", "error": out[-500:]}
+            return {"status": "ok", "message": f"Package '{package_name}' installed successfully.", "output": out[-300:]}
+
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "error": "Installation timed out. The package may still be installing in the background."}
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
 
