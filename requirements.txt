@@ -4,3 +4,7 @@ rich>=13.0.0
 python-dotenv>=1.0.0
 customtkinter>=5.2.0
 pywin32>=306; sys_platform=="win32"
+# Voice interface (optional — install system deps first: apt install espeak-ng portaudio19-dev)
+faster-whisper>=1.0.0
+sounddevice>=0.4.6
+pyttsx3>=2.90

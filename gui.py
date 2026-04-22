@@ -18,6 +18,14 @@ from agent.core import run_agent
 
 load_dotenv()
 
+# Voice engine — imported lazily so the app starts even without the packages
+try:
+    from voice.engine import VoiceEngine as _VoiceEngine
+    _VOICE_AVAILABLE = True
+except ImportError:
+    _VoiceEngine = None  # type: ignore[assignment,misc]
+    _VOICE_AVAILABLE = False
+
 # ── Font scaling ────────────────────────────────────────────────────────────
 _FONT_SCALE: float = float(os.environ.get("FONT_SCALE", "1.0"))
 
@@ -158,6 +166,9 @@ class ServiceDeskApp(ctk.CTk):
         self._ticket_status = "OFFEN"
         self._sidebar_visible = True
         self._last_agent_text = ""
+        self._tts_enabled = True
+        self._voice_active = False
+        self._voice: "_VoiceEngine | None" = None  # type: ignore[name-defined]
 
         self._build_ui()
         self._start_stats_thread()
@@ -233,6 +244,36 @@ class ServiceDeskApp(ctk.CTk):
             font=ctk.CTkFont(family="monospace", size=_f(11), weight="bold"),
             text_color=YELLOW)
         self._ticket_lbl.pack(side="right", padx=8)
+
+        ctk.CTkFrame(right, width=1, fg_color=BORDER).pack(
+            side="right", fill="y", pady=8, padx=8)
+
+        # Voice controls (mic toggle + mute TTS)
+        voice_row = ctk.CTkFrame(right, fg_color="transparent")
+        voice_row.pack(side="right", padx=4)
+
+        self._mic_dot = ctk.CTkFrame(voice_row, width=8, height=8,
+                                      corner_radius=4, fg_color=MUTED)
+        self._mic_dot.pack(side="left", padx=(0, 4))
+
+        self._voice_btn = ctk.CTkButton(
+            voice_row, text="🎙 AUS",
+            fg_color=SURFACE, hover_color=BORDER,
+            text_color=MUTED, width=72, height=28, corner_radius=6,
+            font=ctk.CTkFont(size=_f(11), weight="bold"),
+            command=self._toggle_voice,
+            state="normal" if _VOICE_AVAILABLE else "disabled",
+        )
+        self._voice_btn.pack(side="left", padx=(0, 4))
+
+        self._mute_btn = ctk.CTkButton(
+            voice_row, text="🔊",
+            fg_color=SURFACE, hover_color=BORDER,
+            text_color=TEXT, width=32, height=28, corner_radius=6,
+            font=ctk.CTkFont(size=_f(11)),
+            command=self._toggle_mute,
+        )
+        self._mute_btn.pack(side="left")
 
         ctk.CTkFrame(right, width=1, fg_color=BORDER).pack(
             side="right", fill="y", pady=8, padx=8)
@@ -517,6 +558,10 @@ class ServiceDeskApp(ctk.CTk):
     def _agent_thread(self, query: str) -> None:
         def on_text(t):
             self._queue.put(("text", t))
+            if self._tts_enabled and self._voice_active:
+                threading.Thread(
+                    target=self._voice.speak, args=(t,), daemon=True
+                ).start()
 
         def on_tool(name):
             self._queue.put(("tool", f"Führe aus: {name}"))
@@ -547,6 +592,65 @@ class ServiceDeskApp(ctk.CTk):
             self._queue.put(("toast", "Fehler aufgetreten", "error"))
         finally:
             self._queue.put(("done",))
+
+    # ── Voice interface ───────────────────────────────────────────────────
+
+    def _toggle_voice(self) -> None:
+        if not _VOICE_AVAILABLE:
+            self._add_bubble(
+                "Sprachpakete nicht installiert.\n"
+                "Bitte ausführen:\n"
+                "  sudo apt install espeak-ng portaudio19-dev\n"
+                "  pip install faster-whisper sounddevice pyttsx3",
+                "system",
+            )
+            return
+        if self._voice_active:
+            self._stop_voice()
+        else:
+            self._start_voice()
+
+    def _start_voice(self) -> None:
+        def on_transcript(text: str) -> None:
+            self._queue.put(("voice_text", text))
+
+        self._voice = _VoiceEngine(on_transcript, language="de")  # type: ignore[misc]
+        self._voice.start()
+
+        # Wait briefly for init error (mic not found, etc.)
+        self.after(1500, self._check_voice_init)
+
+        self._voice_active = True
+        self._voice_btn.configure(text="🎙 EIN", text_color=GREEN,
+                                   fg_color="#0A2A10", border_color=GREEN,
+                                   border_width=1)
+        self._pulse_mic(0)
+        self._add_bubble("🎙 Mikrofon aktiv — sprich einfach los.", "system")
+
+    def _stop_voice(self) -> None:
+        if self._voice:
+            self._voice.stop()
+            self._voice = None
+        self._voice_active = False
+        self._voice_btn.configure(text="🎙 AUS", text_color=MUTED,
+                                   fg_color=SURFACE, border_width=0)
+        self._mic_dot.configure(fg_color=MUTED)
+        self._add_bubble("🎙 Mikrofon deaktiviert.", "system")
+
+    def _check_voice_init(self) -> None:
+        if self._voice and self._voice.get_init_error():
+            self._queue.put(("voice_error", self._voice.get_init_error()))
+
+    def _toggle_mute(self) -> None:
+        self._tts_enabled = not self._tts_enabled
+        self._mute_btn.configure(text="🔇" if not self._tts_enabled else "🔊")
+
+    def _pulse_mic(self, tick: int) -> None:
+        if not self._voice_active:
+            return
+        colors = [GREEN, "#00AA55", GREEN, "#00FF88"]
+        self._mic_dot.configure(fg_color=colors[tick % len(colors)])
+        self.after(400, lambda: self._pulse_mic(tick + 1))
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -589,6 +693,18 @@ class ServiceDeskApp(ctk.CTk):
                 elif kind == "toast":
                     _, message, toast_kind = msg
                     Toast(self, message, toast_kind)
+                elif kind == "voice_text":
+                    # Transcribed speech — auto-submit if not busy
+                    if not self._busy:
+                        self._entry.delete(0, "end")
+                        self._entry.insert(0, msg[1])
+                        self._send()
+                elif kind == "voice_error":
+                    self._add_bubble(f"🎙 {msg[1]}", "system")
+                    self._voice_active = False
+                    self._voice_btn.configure(text="🎙 AUS", text_color=MUTED,
+                                               fg_color=SURFACE)
+                    self._mic_dot.configure(fg_color=MUTED)
                 elif kind == "done":
                     self._hide_thinking()
                     self._set_busy(False)
