@@ -12,7 +12,7 @@ import shutil
 import subprocess
 
 
-def flush_dns_cache(explanation: str) -> dict:
+def flush_dns_cache(explanation: str = "") -> dict:
     """Clear the DNS resolver cache.
 
     Args:
@@ -34,7 +34,7 @@ def flush_dns_cache(explanation: str) -> dict:
         return {"status": "error", "error": str(exc)}
 
 
-def restart_service(service_name: str, explanation: str) -> dict:
+def restart_service(service_name: str, explanation: str = "") -> dict:
     """Stop and restart a named Windows/macOS/Linux service.
 
     Args:
@@ -56,7 +56,7 @@ def restart_service(service_name: str, explanation: str) -> dict:
         return {"status": "error", "error": str(exc)}
 
 
-def kill_process(process_name: str, explanation: str) -> dict:
+def kill_process(process_name: str, explanation: str = "") -> dict:
     """Force-terminate all running instances of a named process.
 
     Args:
@@ -75,7 +75,7 @@ def kill_process(process_name: str, explanation: str) -> dict:
         return {"status": "error", "error": str(exc)}
 
 
-def clear_app_cache(app_name: str, explanation: str) -> dict:
+def clear_app_cache(app_name: str, explanation: str = "") -> dict:
     """Delete the cache folder for a specific application.
 
     Args:
@@ -117,7 +117,7 @@ def clear_app_cache(app_name: str, explanation: str) -> dict:
     }
 
 
-def restart_network_adapter(adapter_name: str, explanation: str) -> dict:
+def restart_network_adapter(adapter_name: str, explanation: str = "") -> dict:
     """Disable then re-enable a named network adapter to reset the connection.
 
     Args:
@@ -154,7 +154,7 @@ def restart_network_adapter(adapter_name: str, explanation: str) -> dict:
         return {"status": "error", "error": str(exc)}
 
 
-def install_package(package_name: str, explanation: str) -> dict:
+def install_package(package_name: str, explanation: str = "") -> dict:
     """Install a software package via the system package manager.
 
     Args:
