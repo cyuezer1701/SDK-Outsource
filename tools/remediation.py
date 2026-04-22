@@ -175,9 +175,11 @@ def install_package(package_name: str, explanation: str) -> dict:
             _run(f"brew install {package_name}", timeout=120)
             return {"status": "ok", "message": f"Package '{package_name}' installed via Homebrew."}
         else:
-            _run("apt-get update -qq", timeout=60)
-            _run(f"apt-get install -y {package_name}", timeout=120)
-            return {"status": "ok", "message": f"Package '{package_name}' installed via apt."}
+            # Use sudo if not already root
+            prefix = "" if os.geteuid() == 0 else "sudo "
+            _run(f"{prefix}apt-get update -qq", timeout=60)
+            output = _run(f"{prefix}DEBIAN_FRONTEND=noninteractive apt-get install -y {package_name}", timeout=900)
+            return {"status": "ok", "message": f"Package '{package_name}' installed via apt.", "output": output}
     except Exception as exc:
         return {"status": "error", "error": str(exc)}
 
