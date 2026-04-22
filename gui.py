@@ -116,6 +116,7 @@ class ChatApp(ctk.CTk):
         self.minsize(600, 420)
 
         self._queue: queue.Queue = queue.Queue()
+        self._history: list[dict] = []
         self._build_ui()
         self._add_bubble(
             "Hallo! Ich bin dein IT-Support-Agent.\n"
@@ -250,13 +251,15 @@ class ChatApp(ctk.CTk):
             self._queue.put(("system", f"🚫  Blockiert: {reason}"))
 
         try:
-            run_agent(
+            updated = run_agent(
                 query,
+                history=self._history,
                 on_text=on_text,
                 on_tool=on_tool,
                 on_approval=on_approval,
                 on_blocked=on_blocked,
             )
+            self._queue.put(("history", updated))
         except Exception as exc:
             self._queue.put(("system", f"❌  Fehler: {exc}"))
         finally:
@@ -280,6 +283,8 @@ class ChatApp(ctk.CTk):
                 elif kind == "approval":
                     _, explanation, tech_detail, event, result = msg
                     ApprovalDialog(self, explanation, tech_detail, event, result)
+                elif kind == "history":
+                    self._history = msg[1]
                 elif kind == "done":
                     self._set_busy(False)
         except queue.Empty:

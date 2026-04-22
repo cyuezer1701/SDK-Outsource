@@ -252,12 +252,16 @@ _TOOL_REGISTRY: dict[str, Any] = {
 def run_agent(
     user_query: str,
     *,
+    history: list[dict] | None = None,
     on_text: Callable[[str], None] | None = None,
     on_tool: Callable[[str], None] | None = None,
     on_approval: Callable[[str, str], bool] | None = None,
     on_blocked: Callable[[str], None] | None = None,
-) -> None:
+) -> list[dict]:
     """Run one full agentic session for the given user query.
+
+    Accepts optional conversation history so the agent remembers previous
+    turns. Returns the updated messages list for the caller to persist.
 
     When callbacks are provided the function is silent (no Rich output) and
     uses the callbacks for all user-facing events — suitable for GUI use.
@@ -266,7 +270,8 @@ def run_agent(
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     model = os.environ.get("AGENT_MODEL", "claude-sonnet-4-6")
 
-    messages: list[dict] = [{"role": "user", "content": user_query}]
+    messages: list[dict] = list(history) if history else []
+    messages.append({"role": "user", "content": user_query})
 
     if not on_text:
         console.print()
@@ -300,7 +305,8 @@ def run_agent(
                         on_text(block.text)
                     else:
                         console.print(Markdown(block.text))
-            break
+            messages.append({"role": "assistant", "content": response.content})
+            return messages
 
         # ---- Tool use -------------------------------------------------------
         if response.stop_reason == "tool_use":
@@ -335,7 +341,7 @@ def run_agent(
         # Unexpected stop reason
         if not on_text:
             console.print(f"[yellow]Stopped with reason: {response.stop_reason}[/yellow]")
-        break
+        return messages
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,8 @@ def main() -> None:
         )
     )
 
+    history: list[dict] = []
+
     while True:
         try:
             query = console.input("\n[bold green]You:[/bold green] ").strip()
@@ -40,7 +42,7 @@ def main() -> None:
             console.print("[dim]Goodbye![/dim]")
             break
 
-        run_agent(query)
+        history = run_agent(query, history=history)
 
 
 if __name__ == "__main__":
