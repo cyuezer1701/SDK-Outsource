@@ -287,11 +287,12 @@ class ServiceDeskApp(ctk.CTk):
     # ── Sidebar ──────────────────────────────────────────────────────────
 
     def _build_sidebar(self):
-        self._sidebar = ctk.CTkFrame(
-            self, width=230, corner_radius=0,
-            fg_color=PANEL, border_color=BORDER, border_width=1)
+        self._sidebar = ctk.CTkScrollableFrame(
+            self, width=210, corner_radius=0,
+            fg_color=PANEL, border_color=BORDER, border_width=1,
+            scrollbar_button_color=BORDER,
+            scrollbar_button_hover_color=SURFACE)
         self._sidebar.grid(row=1, column=0, sticky="nsew", rowspan=2)
-        self._sidebar.grid_propagate(False)
 
         def section(text):
             ctk.CTkLabel(self._sidebar, text=text,
