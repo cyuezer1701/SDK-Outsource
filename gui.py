@@ -354,7 +354,15 @@ class ServiceDeskApp(ctk.CTk):
             text_color=CYAN, anchor="w", height=32, corner_radius=6,
             font=ctk.CTkFont(size=_f(12)),
             command=self._new_session,
-        ).pack(fill="x", padx=12, pady=(8, 4))
+        ).pack(fill="x", padx=12, pady=(8, 2))
+
+        self._dashboard_btn = ctk.CTkButton(
+            self._sidebar, text="🖥  L2 Dashboard",
+            fg_color=SURFACE, hover_color=BORDER,
+            text_color=YELLOW, anchor="w", height=32, corner_radius=6,
+            font=ctk.CTkFont(size=_f(12)),
+            command=self._open_dashboard,
+        ).pack(fill="x", padx=12, pady=(0, 4))
 
         ctk.CTkFrame(self._sidebar, height=1, fg_color=BORDER).pack(
             fill="x", padx=12, pady=12)
@@ -583,6 +591,20 @@ class ServiceDeskApp(ctk.CTk):
         self._welcome()
 
     # ── Send & agent thread ───────────────────────────────────────────────
+
+    def _open_dashboard(self) -> None:
+        import webbrowser
+        try:
+            from dashboard.server import start_background
+            port = start_background()
+            # Small delay so Flask is ready
+            self.after(600, lambda: webbrowser.open(f"http://127.0.0.1:{port}"))
+            Toast(self, f"Dashboard öffnet auf Port {port}", "ok")
+        except ImportError:
+            self._add_bubble(
+                "Flask nicht installiert.\nBitte ausführen: pip install flask",
+                "system",
+            )
 
     def _send(self) -> None:
         text = self._entry.get().strip()
