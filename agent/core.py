@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, Callable
 
 import anthropic
 from rich.console import Console
@@ -249,39 +249,57 @@ _TOOL_REGISTRY: dict[str, Any] = {
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def run_agent(user_query: str) -> None:
+def run_agent(
+    user_query: str,
+    *,
+    on_text: Callable[[str], None] | None = None,
+    on_tool: Callable[[str], None] | None = None,
+    on_approval: Callable[[str, str], bool] | None = None,
+    on_blocked: Callable[[str], None] | None = None,
+) -> None:
     """Run one full agentic session for the given user query.
 
-    Prints output directly to the console via Rich.
+    When callbacks are provided the function is silent (no Rich output) and
+    uses the callbacks for all user-facing events — suitable for GUI use.
+    When callbacks are omitted it falls back to the original Rich CLI output.
     """
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     model = os.environ.get("AGENT_MODEL", "claude-sonnet-4-6")
 
     messages: list[dict] = [{"role": "user", "content": user_query}]
 
-    console.print()
+    if not on_text:
+        console.print()
 
     while True:
-        with console.status("[bold blue]Agent is thinking...[/bold blue]", spinner="dots"):
+        if on_text:
             response = client.messages.create(
                 model=model,
                 max_tokens=4096,
-                system=[
-                    {
-                        "type": "text",
-                        "text": _SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},  # prompt caching
-                    }
-                ],
+                system=[{"type": "text", "text": _SYSTEM_PROMPT,
+                          "cache_control": {"type": "ephemeral"}}],
                 tools=_TOOL_SCHEMAS,  # type: ignore[arg-type]
                 messages=messages,
             )
+        else:
+            with console.status("[bold blue]Agent is thinking...[/bold blue]", spinner="dots"):
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=4096,
+                    system=[{"type": "text", "text": _SYSTEM_PROMPT,
+                              "cache_control": {"type": "ephemeral"}}],
+                    tools=_TOOL_SCHEMAS,  # type: ignore[arg-type]
+                    messages=messages,
+                )
 
         # ---- Final answer ---------------------------------------------------
         if response.stop_reason == "end_turn":
             for block in response.content:
                 if hasattr(block, "text") and block.text:
-                    console.print(Markdown(block.text))
+                    if on_text:
+                        on_text(block.text)
+                    else:
+                        console.print(Markdown(block.text))
             break
 
         # ---- Tool use -------------------------------------------------------
@@ -289,12 +307,19 @@ def run_agent(user_query: str) -> None:
             tool_results: list[dict] = []
 
             for block in response.content:
-                # Print any intermediate text Claude emits
                 if hasattr(block, "text") and block.text:
-                    console.print(Markdown(block.text))
+                    if on_text:
+                        on_text(block.text)
+                    else:
+                        console.print(Markdown(block.text))
 
                 if block.type == "tool_use":
-                    result = _dispatch_tool(block.name, block.input)
+                    result = _dispatch_tool(
+                        block.name, block.input,
+                        on_tool=on_tool,
+                        on_approval=on_approval,
+                        on_blocked=on_blocked,
+                    )
                     tool_results.append(
                         {
                             "type": "tool_result",
@@ -308,7 +333,8 @@ def run_agent(user_query: str) -> None:
             continue
 
         # Unexpected stop reason
-        console.print(f"[yellow]Stopped with reason: {response.stop_reason}[/yellow]")
+        if not on_text:
+            console.print(f"[yellow]Stopped with reason: {response.stop_reason}[/yellow]")
         break
 
 
@@ -316,54 +342,72 @@ def run_agent(user_query: str) -> None:
 # Tool dispatcher with guardrails
 # ---------------------------------------------------------------------------
 
-def _dispatch_tool(name: str, inputs: dict) -> dict:
+def _dispatch_tool(
+    name: str,
+    inputs: dict,
+    *,
+    on_tool: Callable[[str], None] | None = None,
+    on_approval: Callable[[str, str], bool] | None = None,
+    on_blocked: Callable[[str], None] | None = None,
+) -> dict:
     """Apply guardrails and execute a tool, returning a result dict."""
     risk = classify_tool(name, inputs.get("command", ""))
 
     # Blocked — refuse completely
     if risk == RiskLevel.BLOCKED:
-        console.print(
-            Panel(
-                "[red bold]BLOCKED[/red bold] — This command is not permitted by security policy.",
-                border_style="red",
-                title="Security Block",
+        reason = "Command is not permitted by security policy."
+        if on_blocked:
+            on_blocked(reason)
+        else:
+            console.print(
+                Panel(
+                    "[red bold]BLOCKED[/red bold] — This command is not permitted by security policy.",
+                    border_style="red",
+                    title="Security Block",
+                )
             )
-        )
-        return {"status": "blocked", "reason": "Command is not permitted by security policy."}
+        return {"status": "blocked", "reason": reason}
 
     # Requires approval — explain and ask
     if risk == RiskLevel.REQUIRES_APPROVAL:
         explanation = inputs.get("explanation", f"Run tool '{name}'")
         tech_detail = _format_tech_detail(name, inputs)
 
-        console.print(
-            Panel(
-                f"[bold yellow]ACTION REQUIRED[/bold yellow]\n\n"
-                f"The agent wants to:\n[cyan]{explanation}[/cyan]\n\n"
-                f"[dim]Technical action: {tech_detail}[/dim]",
-                title="[bold yellow]Security Check[/bold yellow]",
-                border_style="yellow",
+        if on_approval:
+            approved = on_approval(explanation, tech_detail)
+        else:
+            console.print(
+                Panel(
+                    f"[bold yellow]ACTION REQUIRED[/bold yellow]\n\n"
+                    f"The agent wants to:\n[cyan]{explanation}[/cyan]\n\n"
+                    f"[dim]Technical action: {tech_detail}[/dim]",
+                    title="[bold yellow]Security Check[/bold yellow]",
+                    border_style="yellow",
+                )
             )
-        )
+            answer = Prompt.ask(
+                "[bold]Do you approve this action?[/bold]",
+                choices=["y", "n"],
+                default="n",
+            )
+            approved = answer.lower() == "y"
 
-        answer = Prompt.ask(
-            "[bold]Do you approve this action?[/bold]",
-            choices=["y", "n"],
-            default="n",
-        )
-
-        if answer.lower() != "y":
-            console.print("[dim]Action cancelled by user.[/dim]")
+        if not approved:
+            if not on_approval:
+                console.print("[dim]Action cancelled by user.[/dim]")
             return {"status": "cancelled", "message": "User declined the action."}
 
     # Execute (safe or approved)
-    console.print(f"[dim]  → Executing: {name}[/dim]")
+    if on_tool:
+        on_tool(name)
+    else:
+        console.print(f"[dim]  → Executing: {name}[/dim]")
+
     func = _TOOL_REGISTRY.get(name)
     if func is None:
         return {"status": "error", "error": f"Tool '{name}' not found in registry."}
 
     try:
-        # Strip 'explanation' from kwargs — it's only for the approval UI
         kwargs = {k: v for k, v in inputs.items() if k != "explanation"}
         return func(**kwargs)
     except Exception as exc:
@@ -378,5 +422,6 @@ def _format_tech_detail(name: str, inputs: dict) -> str:
         "kill_process": f"taskkill /IM '{inputs.get('process_name', '?')}' /F  (or pkill)",
         "clear_app_cache": f"Delete cache folder for {inputs.get('app_name', '?')}",
         "restart_network_adapter": f"Disable/Enable adapter '{inputs.get('adapter_name', '?')}'",
+        "install_package": f"apt-get install -y {inputs.get('package_name', '?')}",
     }
     return detail_map.get(name, name)
