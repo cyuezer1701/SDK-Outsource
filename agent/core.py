@@ -31,7 +31,9 @@ RULES:
    jargon-free sentence describing what the action will do and why.
 4. Never skip the diagnostic phase — verify the problem before fixing it.
 5. After applying a fix, re-run diagnostic tools to confirm the problem is resolved.
-6. If you cannot fix the problem, tell the user what to escalate to IT and why.
+6. If you cannot solve the problem after exhausting all relevant tools, call
+   escalate_to_l2 with a clear summary and all steps you already tried.
+   Set priority 'high' if the system is down or data is at risk, 'medium' otherwise.
 7. Keep every text response under 5 sentences. Use bullet points if more detail is needed.
    Never repeat what a tool already showed — just interpret and recommend.
 8. After clean_disk_space, always run get_disk_info before AND after to confirm space freed.
@@ -338,6 +340,24 @@ _TOOL_SCHEMAS: list[dict] = [
          "service_name": {"type": "string"},
          "enabled": {"type": "boolean", "description": "true = enable, false = disable"},
          "explanation": {"type": "string"}}, "required": ["service_name", "enabled", "explanation"]}},
+    {"name": "escalate_to_l2",
+     "description": (
+         "Create a persistent L2 support ticket when the problem cannot be solved at L1. "
+         "Saves a structured Markdown report in tickets/<ID>.md for the L2 technician. "
+         "REQUIRES USER APPROVAL."
+     ),
+     "input_schema": {"type": "object", "properties": {
+         "problem": {"type": "string",
+                     "description": "Short problem title, max 80 characters."},
+         "summary": {"type": "string",
+                     "description": "Why this cannot be resolved at L1 — root cause if known."},
+         "tried_steps": {"type": "string",
+                         "description": "Bullet-point list of every diagnostic and remediation step already attempted."},
+         "priority": {"type": "string", "enum": ["low", "medium", "high"],
+                      "description": "'high' if system is down or data at risk, 'medium' otherwise."},
+         "explanation": {"type": "string",
+                         "description": "Plain-language message shown to the user in the approval dialog."}},
+         "required": ["problem", "summary", "tried_steps", "explanation"]}},
     {"name": "manage_firewall_rule", "description": "Add or remove a UFW firewall rule. REQUIRES USER APPROVAL.",
      "input_schema": {"type": "object", "properties": {
          "action": {"type": "string", "enum": ["allow", "deny", "delete"]},
@@ -389,6 +409,7 @@ _TOOL_REGISTRY: dict[str, Any] = {
     "fix_broken_packages": tool_module.fix_broken_packages,
     "set_service_autostart": tool_module.set_service_autostart,
     "manage_firewall_rule": tool_module.manage_firewall_rule,
+    "escalate_to_l2": tool_module.escalate_to_l2,
 }
 
 # ---------------------------------------------------------------------------
@@ -403,6 +424,7 @@ def run_agent(
     on_tool: Callable[[str], None] | None = None,
     on_approval: Callable[[str, str], bool] | None = None,
     on_blocked: Callable[[str], None] | None = None,
+    on_escalation: Callable[[str, str, str], None] | None = None,
 ) -> list[dict]:
     """Run one full agentic session for the given user query.
 
@@ -472,6 +494,14 @@ def run_agent(
                         on_approval=on_approval,
                         on_blocked=on_blocked,
                     )
+                    if (block.name == "escalate_to_l2"
+                            and result.get("status") == "ok"
+                            and on_escalation):
+                        on_escalation(
+                            result["ticket_id"],
+                            block.input.get("priority", "medium"),
+                            block.input.get("problem", ""),
+                        )
                     tool_results.append(
                         {
                             "type": "tool_result",
@@ -580,5 +610,6 @@ def _format_tech_detail(name: str, inputs: dict) -> str:
         "fix_broken_packages":    "apt-get install -f && dpkg --configure -a",
         "set_service_autostart":  f"systemctl {'enable' if inputs.get('enabled') else 'disable'} {inputs.get('service_name', '?')}",
         "manage_firewall_rule":   f"ufw {inputs.get('action','?')} {inputs.get('port','?')}/{inputs.get('protocol','tcp')}",
+        "escalate_to_l2":         f"Ticket erstellen: [{inputs.get('priority','?').upper()}] {inputs.get('problem','?')}",
     }
     return detail_map.get(name, name)

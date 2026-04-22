@@ -511,6 +511,51 @@ class ServiceDeskApp(ctk.CTk):
 
     # ── Ticket status ─────────────────────────────────────────────────────
 
+    def _show_escalation(self, ticket_id: str, priority: str, problem: str) -> None:
+        """Render a prominent escalation card in the chat."""
+        priority_color = {"high": RED, "medium": YELLOW, "low": GREEN}.get(priority, YELLOW)
+        priority_icon  = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(priority, "🟡")
+
+        outer = ctk.CTkFrame(self._chat, fg_color="transparent")
+        outer.pack(fill="x", padx=16, pady=8)
+
+        card = ctk.CTkFrame(outer, fg_color="#1A0A00",
+                            border_color=priority_color, border_width=2,
+                            corner_radius=12)
+        card.pack(fill="x")
+
+        # Header bar
+        hdr = ctk.CTkFrame(card, fg_color=priority_color, corner_radius=0,
+                           height=4)
+        hdr.pack(fill="x")
+
+        body = ctk.CTkFrame(card, fg_color="transparent")
+        body.pack(fill="x", padx=18, pady=14)
+
+        ctk.CTkLabel(body,
+                     text=f"🚨  ESKALATION AN L2-SUPPORT",
+                     font=ctk.CTkFont(family="monospace", size=_f(13), weight="bold"),
+                     text_color=priority_color).pack(anchor="w")
+
+        ctk.CTkLabel(body,
+                     text=f"Ticket {ticket_id}   {priority_icon} Priorität: {priority.upper()}",
+                     font=ctk.CTkFont(family="monospace", size=_f(11)),
+                     text_color=TEXT).pack(anchor="w", pady=(4, 8))
+
+        ctk.CTkLabel(body,
+                     text=f"Problem: {problem}",
+                     font=ctk.CTkFont(size=_f(12)), text_color=TEXT,
+                     wraplength=600, justify="left").pack(anchor="w")
+
+        ctk.CTkLabel(body,
+                     text=f"Bericht: tickets/{ticket_id}.md",
+                     font=ctk.CTkFont(family="monospace", size=_f(10)),
+                     text_color=MUTED).pack(anchor="w", pady=(6, 0))
+
+        self._set_ticket_status(f"→ L2  {ticket_id}", priority_color)
+        self.after(60, lambda: self._chat._parent_canvas.yview_moveto(1.0))
+        Toast(self, f"Ticket {ticket_id} an L2 weitergeleitet", "warn")
+
     def _set_ticket_status(self, status: str, color: str = YELLOW) -> None:
         self._ticket_status = status
         self._ticket_lbl.configure(
@@ -576,6 +621,9 @@ class ServiceDeskApp(ctk.CTk):
         def on_blocked(reason):
             self._queue.put(("system", f"Blockiert: {reason}"))
 
+        def on_escalation(ticket_id, priority, problem):
+            self._queue.put(("escalation", ticket_id, priority, problem))
+
         try:
             updated = run_agent(
                 query,
@@ -584,6 +632,7 @@ class ServiceDeskApp(ctk.CTk):
                 on_tool=on_tool,
                 on_approval=on_approval,
                 on_blocked=on_blocked,
+                on_escalation=on_escalation,
             )
             self._queue.put(("history", updated))
             self._queue.put(("toast", "Antwort bereit", "ok"))
@@ -685,6 +734,9 @@ class ServiceDeskApp(ctk.CTk):
                 elif kind == "approval":
                     _, expl, tech, ev, res = msg
                     ApprovalDialog(self, expl, tech, ev, res)
+                elif kind == "escalation":
+                    _, ticket_id, priority, problem = msg
+                    self._show_escalation(ticket_id, priority, problem)
                 elif kind == "history":
                     self._history = msg[1]
                 elif kind == "stats":

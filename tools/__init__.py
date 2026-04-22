@@ -49,6 +49,8 @@ from tools.remediation import (
     manage_firewall_rule,
 )
 
+from tools.escalation import escalate_to_l2
+
 __all__ = [
     # Original diagnostic
     "get_system_info", "get_running_processes", "get_network_info",
@@ -76,4 +78,6 @@ __all__ = [
     # New remediation
     "clean_disk_space", "update_all_packages", "fix_broken_packages",
     "set_service_autostart", "manage_firewall_rule",
+    # Escalation
+    "escalate_to_l2",
 ]

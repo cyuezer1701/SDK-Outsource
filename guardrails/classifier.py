@@ -79,6 +79,7 @@ APPROVAL_REQUIRED_TOOLS: frozenset[str] = frozenset({
     "fix_broken_packages",
     "set_service_autostart",
     "manage_firewall_rule",
+    "escalate_to_l2",
 })
 
 
