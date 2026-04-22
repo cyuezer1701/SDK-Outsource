@@ -1,157 +1,297 @@
-"""GUI frontend for the IT Service Desk Agent (Linux, customtkinter)."""
+"""2026-style Virtual IT Service Desk — customtkinter GUI."""
 
 from __future__ import annotations
 
+import datetime
 import os
 import queue
 import threading
+import time
 
 import customtkinter as ctk
+import psutil
 from dotenv import load_dotenv
 
 from agent.core import run_agent
 
 load_dotenv()
 
+# ── Design tokens ──────────────────────────────────────────────────────────
+BG      = "#080C18"
+PANEL   = "#0D1526"
+SURFACE = "#111D33"
+BORDER  = "#1A2B45"
+CYAN    = "#00D4FF"
+PURPLE  = "#8B5CF6"
+GREEN   = "#00E676"
+YELLOW  = "#FFB800"
+RED     = "#FF4560"
+TEXT    = "#E2ECF8"
+MUTED   = "#3D5270"
+
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-# ---------------------------------------------------------------------------
-# Approval dialog
-# ---------------------------------------------------------------------------
+
+# ── Approval dialog ────────────────────────────────────────────────────────
 
 class ApprovalDialog(ctk.CTkToplevel):
-    """Modal popup shown before any remediation action."""
 
-    def __init__(
-        self,
-        parent: ctk.CTk,
-        explanation: str,
-        tech_detail: str,
-        event: threading.Event,
-        result: list[bool],
-    ) -> None:
+    def __init__(self, parent, explanation, tech_detail, event, result):
         super().__init__(parent)
         self._event = event
         self._result = result
-
-        self.title("Genehmigung erforderlich")
-        self.geometry("520x300")
+        self.configure(fg_color=PANEL)
+        self.title("Aktion bestätigen")
+        self.geometry("560x300")
         self.resizable(False, False)
         self.grab_set()
         self.focus_set()
         self.lift()
         self.protocol("WM_DELETE_WINDOW", self._deny)
 
-        ctk.CTkLabel(
-            self,
-            text="⚠️  Genehmigung erforderlich",
-            font=ctk.CTkFont(size=15, weight="bold"),
-            text_color="#FFB800",
-        ).pack(pady=(18, 4), padx=20)
+        # Top accent stripe
+        ctk.CTkFrame(self, height=3, fg_color=YELLOW, corner_radius=0).pack(fill="x")
+
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=24, pady=18)
 
         ctk.CTkLabel(
-            self,
-            text="Der Agent möchte folgende Aktion ausführen:",
-            font=ctk.CTkFont(size=12),
-        ).pack(padx=20)
-
-        exp_box = ctk.CTkTextbox(
-            self, height=80, wrap="word",
-            font=ctk.CTkFont(size=12), activate_scrollbars=False,
-        )
-        exp_box.pack(fill="x", padx=20, pady=(8, 4))
-        exp_box.insert("1.0", explanation)
-        exp_box.configure(state="disabled")
+            body,
+            text="⚡  AKTION ERFORDERLICH",
+            font=ctk.CTkFont(family="monospace", size=13, weight="bold"),
+            text_color=YELLOW,
+        ).pack(anchor="w", pady=(0, 10))
 
         ctk.CTkLabel(
-            self,
-            text=f"Befehl:  {tech_detail}",
-            font=ctk.CTkFont(size=11),
-            text_color="gray60",
-        ).pack(padx=20, pady=(0, 14))
+            body, text=explanation,
+            font=ctk.CTkFont(size=12), text_color=TEXT,
+            wraplength=500, justify="left",
+        ).pack(anchor="w", pady=(0, 12))
 
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(pady=4)
+        chip = ctk.CTkFrame(body, fg_color=SURFACE, corner_radius=6)
+        chip.pack(fill="x", pady=(0, 18))
+        ctk.CTkLabel(
+            chip,
+            text=f"  $ {tech_detail}",
+            font=ctk.CTkFont(family="monospace", size=11),
+            text_color=CYAN,
+        ).pack(anchor="w", padx=12, pady=7)
+
+        btns = ctk.CTkFrame(body, fg_color="transparent")
+        btns.pack(anchor="w")
 
         ctk.CTkButton(
-            btn_frame,
-            text="✓  Ja, ausführen",
-            fg_color="#2B7A3C",
-            hover_color="#1F5C2D",
-            width=160,
+            btns, text="✓  Bestätigen",
+            fg_color="#0A3D20", hover_color="#072D17",
+            text_color=GREEN, border_color=GREEN, border_width=1,
+            width=165, height=40, corner_radius=8,
+            font=ctk.CTkFont(size=12, weight="bold"),
             command=self._approve,
-        ).pack(side="left", padx=10)
+        ).pack(side="left", padx=(0, 12))
 
         ctk.CTkButton(
-            btn_frame,
-            text="✗  Abbrechen",
-            fg_color="#8B2020",
-            hover_color="#6B1818",
-            width=160,
+            btns, text="✗  Abbrechen",
+            fg_color="#3D0A10", hover_color="#2D0509",
+            text_color=RED, border_color=RED, border_width=1,
+            width=165, height=40, corner_radius=8,
+            font=ctk.CTkFont(size=12, weight="bold"),
             command=self._deny,
-        ).pack(side="left", padx=10)
+        ).pack(side="left")
 
-    def _approve(self) -> None:
+    def _approve(self):
         self._result[0] = True
         self.destroy()
         self._event.set()
 
-    def _deny(self) -> None:
+    def _deny(self):
         self._result[0] = False
         self.destroy()
         self._event.set()
 
 
-# ---------------------------------------------------------------------------
-# Main application window
-# ---------------------------------------------------------------------------
+# ── Main window ────────────────────────────────────────────────────────────
 
-class ChatApp(ctk.CTk):
+class ServiceDeskApp(ctk.CTk):
 
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
-        self.title("🖥️  IT Service Desk Agent")
-        self.geometry("820x620")
-        self.minsize(600, 420)
+        self.configure(fg_color=BG)
+        self.title("IT Service Desk  ·  AI-Powered")
+        self.geometry("1140x740")
+        self.minsize(820, 520)
 
         self._queue: queue.Queue = queue.Queue()
         self._history: list[dict] = []
+        self._busy = False
+        self._thinking_frame: ctk.CTkFrame | None = None
+        self._msg_count = 0
+
         self._build_ui()
-        self._add_bubble(
-            "Hallo! Ich bin dein IT-Support-Agent.\n"
-            "Beschreibe dein Problem in normaler Sprache.",
-            role="agent",
-        )
+        self._start_stats_thread()
+        self._welcome()
         self.after(100, self._poll)
 
-    # ------------------------------------------------------------------
-    # UI layout
-    # ------------------------------------------------------------------
+    # ── Layout ──────────────────────────────────────────────────────────
 
-    def _build_ui(self) -> None:
+    def _build_ui(self):
         self.grid_rowconfigure(1, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
+        self._build_header()
+        self._build_sidebar()
+        self._build_chat()
+        self._build_inputbar()
 
-        # Header bar
-        header = ctk.CTkFrame(self, height=52, corner_radius=0, fg_color="#0F172A")
-        header.grid(row=0, column=0, sticky="ew")
-        header.grid_propagate(False)
+    # ── Header ──────────────────────────────────────────────────────────
+
+    def _build_header(self):
+        h = ctk.CTkFrame(
+            self, height=58, corner_radius=0,
+            fg_color=PANEL, border_color=BORDER, border_width=1,
+        )
+        h.grid(row=0, column=0, columnspan=2, sticky="ew")
+        h.grid_propagate(False)
+
+        left = ctk.CTkFrame(h, fg_color="transparent")
+        left.pack(side="left", padx=18, pady=12)
+
+        # Pulsing status dot
+        self._dot = ctk.CTkFrame(left, width=10, height=10,
+                                  corner_radius=5, fg_color=GREEN)
+        self._dot.pack(side="left", padx=(0, 10))
+
         ctk.CTkLabel(
-            header,
-            text="🖥️   IT Service Desk Agent",
-            font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#93C5FD",
-        ).pack(side="left", padx=18, pady=12)
+            left, text="IT SERVICE DESK",
+            font=ctk.CTkFont(family="monospace", size=15, weight="bold"),
+            text_color=CYAN,
+        ).pack(side="left")
 
-        # Chat scroll area
-        self._chat = ctk.CTkScrollableFrame(self, fg_color="#0D0D0D")
-        self._chat.grid(row=1, column=0, sticky="nsew")
+        ctk.CTkLabel(
+            left, text="  ·  AI-Powered Support",
+            font=ctk.CTkFont(size=12), text_color=MUTED,
+        ).pack(side="left")
+
+        right = ctk.CTkFrame(h, fg_color="transparent")
+        right.pack(side="right", padx=18)
+
+        self._clock = ctk.CTkLabel(
+            right, text="",
+            font=ctk.CTkFont(family="monospace", size=12),
+            text_color=MUTED,
+        )
+        self._clock.pack(side="right", padx=(12, 0))
+
+        self._status_lbl = ctk.CTkLabel(
+            right, text="● ONLINE",
+            font=ctk.CTkFont(family="monospace", size=11, weight="bold"),
+            text_color=GREEN,
+        )
+        self._status_lbl.pack(side="right")
+        self._tick()
+
+    # ── Sidebar ──────────────────────────────────────────────────────────
+
+    def _build_sidebar(self):
+        sb = ctk.CTkFrame(
+            self, width=230, corner_radius=0,
+            fg_color=PANEL, border_color=BORDER, border_width=1,
+        )
+        sb.grid(row=1, column=0, sticky="nsew", rowspan=2)
+        sb.grid_propagate(False)
+
+        def section(label):
+            ctk.CTkLabel(
+                sb, text=label,
+                font=ctk.CTkFont(family="monospace", size=9, weight="bold"),
+                text_color=MUTED,
+            ).pack(anchor="w", padx=16, pady=(18, 6))
+
+        # ── System Status ────
+        section("SYSTEM STATUS")
+        self._bars: dict = {}
+        for key, label, color in [
+            ("cpu",  "CPU",      CYAN),
+            ("ram",  "SPEICHER", PURPLE),
+            ("disk", "DISK",     GREEN),
+        ]:
+            card = ctk.CTkFrame(sb, fg_color=SURFACE, corner_radius=8)
+            card.pack(fill="x", padx=12, pady=3)
+
+            row = ctk.CTkFrame(card, fg_color="transparent")
+            row.pack(fill="x", padx=10, pady=(8, 2))
+            ctk.CTkLabel(
+                row, text=label,
+                font=ctk.CTkFont(family="monospace", size=10, weight="bold"),
+                text_color=TEXT,
+            ).pack(side="left")
+            val = ctk.CTkLabel(
+                row, text="—",
+                font=ctk.CTkFont(family="monospace", size=10),
+                text_color=color,
+            )
+            val.pack(side="right")
+            bar = ctk.CTkProgressBar(
+                card, height=3, corner_radius=2,
+                progress_color=color, fg_color=BORDER,
+            )
+            bar.set(0)
+            bar.pack(fill="x", padx=10, pady=(0, 8))
+            self._bars[key] = (bar, val)
+
+        # ── Divider ──────────
+        ctk.CTkFrame(sb, height=1, fg_color=BORDER).pack(
+            fill="x", padx=12, pady=14)
+
+        # ── Quick Actions ────
+        section("SCHNELLAKTIONEN")
+        for icon_label, prompt in [
+            ("🌐  Netzwerk prüfen",   "Check my network connection"),
+            ("⚡  CPU-Auslastung",    "Show me the top CPU processes"),
+            ("💾  Speicherplatz",     "How much disk space do I have?"),
+            ("🔄  DNS leeren",        "Flush the DNS cache"),
+            ("📋  Systeminfo",        "Give me a full system overview"),
+        ]:
+            ctk.CTkButton(
+                sb, text=icon_label,
+                fg_color=SURFACE, hover_color=BORDER,
+                text_color=TEXT, anchor="w",
+                height=32, corner_radius=6,
+                font=ctk.CTkFont(size=12),
+                command=lambda p=prompt: self._quick(p),
+            ).pack(fill="x", padx=12, pady=2)
+
+        # ── Divider ──────────
+        ctk.CTkFrame(sb, height=1, fg_color=BORDER).pack(
+            fill="x", padx=12, pady=14)
+
+        # ── Session info ─────
+        section("SESSION")
+        self._session_lbl = ctk.CTkLabel(
+            sb, text="Nachrichten: 0",
+            font=ctk.CTkFont(family="monospace", size=10),
+            text_color=MUTED,
+        )
+        self._session_lbl.pack(anchor="w", padx=16)
+
+    # ── Chat area ────────────────────────────────────────────────────────
+
+    def _build_chat(self):
+        self._chat = ctk.CTkScrollableFrame(
+            self, fg_color=BG,
+            scrollbar_button_color=BORDER,
+            scrollbar_button_hover_color=SURFACE,
+        )
+        self._chat.grid(row=1, column=1, sticky="nsew")
         self._chat.grid_columnconfigure(0, weight=1)
 
-        # Input bar
-        bar = ctk.CTkFrame(self, height=72, corner_radius=0, fg_color="#1E1E2E")
-        bar.grid(row=2, column=0, sticky="ew")
+    # ── Input bar ────────────────────────────────────────────────────────
+
+    def _build_inputbar(self):
+        bar = ctk.CTkFrame(
+            self, height=78, corner_radius=0,
+            fg_color=PANEL, border_color=BORDER, border_width=1,
+        )
+        bar.grid(row=2, column=1, sticky="ew")
         bar.grid_propagate(False)
         bar.grid_columnconfigure(0, weight=1)
 
@@ -159,96 +299,138 @@ class ChatApp(ctk.CTk):
             bar,
             placeholder_text="Problem beschreiben und Enter drücken…",
             font=ctk.CTkFont(size=13),
-            height=42,
+            fg_color=SURFACE, border_color=BORDER,
+            text_color=TEXT, height=46, corner_radius=10,
         )
-        self._entry.grid(row=0, column=0, padx=(14, 8), pady=15, sticky="ew")
-        self._entry.bind("<Return>", lambda _e: self._send())
+        self._entry.grid(row=0, column=0, padx=(16, 10), pady=16, sticky="ew")
+        self._entry.bind("<Return>", lambda _: self._send())
 
         self._btn = ctk.CTkButton(
-            bar, text="Senden", width=100, height=42,
+            bar, text="▶",
+            fg_color=CYAN, hover_color="#00AACC",
+            text_color="#000000",
+            width=54, height=46, corner_radius=10,
+            font=ctk.CTkFont(size=16, weight="bold"),
             command=self._send,
         )
-        self._btn.grid(row=0, column=1, padx=(0, 14), pady=15)
+        self._btn.grid(row=0, column=1, padx=(0, 16), pady=16)
 
-    # ------------------------------------------------------------------
-    # Chat bubbles
-    # ------------------------------------------------------------------
+    # ── Bubble rendering ─────────────────────────────────────────────────
 
     def _add_bubble(self, text: str, role: str) -> None:
-        """Render a chat bubble. role: 'user' | 'agent' | 'tool' | 'system'"""
+        now = datetime.datetime.now().strftime("%H:%M")
+        is_user = role == "user"
         cfg = {
-            "user":   {"bg": "#1D4ED8", "fg": "#F0F9FF", "side": "right"},
-            "agent":  {"bg": "#1E293B", "fg": "#E2E8F0", "side": "left"},
-            "tool":   {"bg": "#052E16", "fg": "#86EFAC", "side": "left"},
-            "system": {"bg": "#2D1B00", "fg": "#FDE68A", "side": "left"},
+            "user":   (SURFACE,    CYAN,   "🧑", "Du",      "e"),
+            "agent":  (SURFACE,    TEXT,   "🤖", "Agent",   "w"),
+            "tool":   ("#091A0E",  GREEN,  "⚙️", "System",  "w"),
+            "system": ("#1A1000",  YELLOW, "⚡", "Hinweis", "w"),
         }
-        c = cfg.get(role, cfg["agent"])
+        bg, fg, icon, name, side = cfg.get(role, cfg["agent"])
 
-        row = ctk.CTkFrame(self._chat, fg_color="transparent")
-        row.pack(fill="x", padx=10, pady=3)
+        outer = ctk.CTkFrame(self._chat, fg_color="transparent")
+        outer.pack(fill="x", padx=16, pady=5, anchor=side)
 
-        # Estimate height from line count
+        meta = ctk.CTkLabel(
+            outer,
+            text=f"{icon}  {name}   {now}",
+            font=ctk.CTkFont(size=10),
+            text_color=MUTED,
+        )
+        meta.pack(anchor="e" if is_user else "w",
+                  padx=(60 if is_user else 2, 2 if is_user else 60))
+
         lines = text.count("\n") + 1
-        height = min(max(lines * 22 + 22, 46), 320)
+        h = min(max(lines * 20 + 28, 48), 360)
 
-        box = ctk.CTkTextbox(
-            row,
-            wrap="word",
-            fg_color=c["bg"],
-            text_color=c["fg"],
+        bubble = ctk.CTkTextbox(
+            outer,
+            wrap="word", fg_color=bg, text_color=fg,
             font=ctk.CTkFont(size=12),
-            height=height,
-            activate_scrollbars=False,
-            border_spacing=10,
+            height=h, activate_scrollbars=False,
+            border_spacing=12,
+            border_color=BORDER, border_width=1,
+            corner_radius=12,
         )
-        box.insert("1.0", text)
-        box.configure(state="disabled")
-        box.pack(
-            side=c["side"],  # type: ignore[arg-type]
-            fill="x" if role != "user" else "none",
-            expand=(role != "user"),
-            padx=(0 if role == "user" else 4, 4 if role == "user" else 0),
+        bubble.insert("1.0", text)
+        bubble.configure(state="disabled")
+        bubble.pack(
+            anchor="e" if is_user else "w",
+            fill="x" if not is_user else "none",
+            expand=not is_user,
+            padx=(80 if is_user else 0, 0 if is_user else 80),
         )
 
-        # Scroll to bottom
+        if is_user:
+            self._msg_count += 1
+            self._session_lbl.configure(text=f"Nachrichten: {self._msg_count}")
+
         self.after(60, lambda: self._chat._parent_canvas.yview_moveto(1.0))
 
-    def _set_busy(self, busy: bool) -> None:
-        state = "disabled" if busy else "normal"
-        self._btn.configure(state=state, text="…" if busy else "Senden")
-        self._entry.configure(state=state)
-        if not busy:
-            self._entry.focus()
+    def _show_thinking(self) -> None:
+        f = ctk.CTkFrame(
+            self._chat, fg_color=SURFACE,
+            corner_radius=12, border_color=BORDER, border_width=1,
+        )
+        f.pack(anchor="w", padx=16, pady=5)
+        f._is_thinking = True  # type: ignore[attr-defined]
+        lbl = ctk.CTkLabel(
+            f,
+            text="🤖  Analysiere…",
+            font=ctk.CTkFont(family="monospace", size=12),
+            text_color=CYAN,
+        )
+        lbl.pack(padx=18, pady=12)
+        self._thinking_frame = f
+        self._animate_thinking(lbl, 0)
+        self.after(60, lambda: self._chat._parent_canvas.yview_moveto(1.0))
 
-    # ------------------------------------------------------------------
-    # Send & agent thread
-    # ------------------------------------------------------------------
+    def _animate_thinking(self, lbl, tick):
+        if not self._busy:
+            return
+        dots = ["Analysiere   ", "Analysiere .  ", "Analysiere .. ", "Analysiere ..."]
+        lbl.configure(text=f"🤖  {dots[tick % 4]}")
+        self.after(500, lambda: self._animate_thinking(lbl, tick + 1))
+
+    def _hide_thinking(self) -> None:
+        if self._thinking_frame:
+            self._thinking_frame.destroy()
+            self._thinking_frame = None
+
+    # ── Send & agent thread ───────────────────────────────────────────────
 
     def _send(self) -> None:
         text = self._entry.get().strip()
-        if not text:
+        if not text or self._busy:
             return
         self._entry.delete(0, "end")
         self._add_bubble(text, "user")
         self._set_busy(True)
         threading.Thread(target=self._agent_thread, args=(text,), daemon=True).start()
 
+    def _quick(self, prompt: str) -> None:
+        if self._busy:
+            return
+        self._entry.delete(0, "end")
+        self._entry.insert(0, prompt)
+        self._send()
+
     def _agent_thread(self, query: str) -> None:
-        def on_text(t: str) -> None:
+        def on_text(t):
             self._queue.put(("text", t))
 
-        def on_tool(name: str) -> None:
-            self._queue.put(("tool", f"⚙️  Führe aus: {name}"))
+        def on_tool(name):
+            self._queue.put(("tool", f"Führe aus: {name}"))
 
-        def on_approval(explanation: str, tech_detail: str) -> bool:
-            event = threading.Event()
-            result: list[bool] = [False]
-            self._queue.put(("approval", explanation, tech_detail, event, result))
-            event.wait()
-            return result[0]
+        def on_approval(explanation, tech_detail):
+            ev = threading.Event()
+            res: list[bool] = [False]
+            self._queue.put(("approval", explanation, tech_detail, ev, res))
+            ev.wait()
+            return res[0]
 
-        def on_blocked(reason: str) -> None:
-            self._queue.put(("system", f"🚫  Blockiert: {reason}"))
+        def on_blocked(reason):
+            self._queue.put(("system", f"Blockiert: {reason}"))
 
         try:
             updated = run_agent(
@@ -261,13 +443,28 @@ class ChatApp(ctk.CTk):
             )
             self._queue.put(("history", updated))
         except Exception as exc:
-            self._queue.put(("system", f"❌  Fehler: {exc}"))
+            self._queue.put(("system", f"Fehler: {exc}"))
         finally:
             self._queue.put(("done",))
 
-    # ------------------------------------------------------------------
-    # Queue polling (main thread)
-    # ------------------------------------------------------------------
+    def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        if busy:
+            self._btn.configure(state="disabled", text="…", fg_color=MUTED,
+                                 text_color=TEXT)
+            self._entry.configure(state="disabled")
+            self._show_thinking()
+            self._dot.configure(fg_color=YELLOW)
+            self._status_lbl.configure(text="● ANALYSIERT", text_color=YELLOW)
+        else:
+            self._btn.configure(state="normal", text="▶", fg_color=CYAN,
+                                 text_color="#000000")
+            self._entry.configure(state="normal")
+            self._entry.focus()
+            self._dot.configure(fg_color=GREEN)
+            self._status_lbl.configure(text="● ONLINE", text_color=GREEN)
+
+    # ── Queue polling ─────────────────────────────────────────────────────
 
     def _poll(self) -> None:
         try:
@@ -275,33 +472,71 @@ class ChatApp(ctk.CTk):
                 msg = self._queue.get_nowait()
                 kind = msg[0]
                 if kind == "text":
+                    self._hide_thinking()
                     self._add_bubble(msg[1], "agent")
                 elif kind == "tool":
                     self._add_bubble(msg[1], "tool")
                 elif kind == "system":
+                    self._hide_thinking()
                     self._add_bubble(msg[1], "system")
                 elif kind == "approval":
-                    _, explanation, tech_detail, event, result = msg
-                    ApprovalDialog(self, explanation, tech_detail, event, result)
+                    _, expl, tech, ev, res = msg
+                    ApprovalDialog(self, expl, tech, ev, res)
                 elif kind == "history":
                     self._history = msg[1]
+                elif kind == "stats":
+                    _, cpu, ram, disk = msg
+                    for key, val in [("cpu", cpu), ("ram", ram), ("disk", disk)]:
+                        bar, lbl = self._bars[key]
+                        bar.set(val / 100)
+                        lbl.configure(text=f"{val:.0f}%")
                 elif kind == "done":
+                    self._hide_thinking()
                     self._set_busy(False)
         except queue.Empty:
             pass
         self.after(100, self._poll)
 
+    # ── Live system stats ─────────────────────────────────────────────────
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+    def _start_stats_thread(self) -> None:
+        def loop():
+            while True:
+                try:
+                    cpu  = psutil.cpu_percent(interval=1)
+                    ram  = psutil.virtual_memory().percent
+                    disk = psutil.disk_usage("/").percent
+                    self._queue.put(("stats", cpu, ram, disk))
+                except Exception:
+                    pass
+                time.sleep(3)
+        threading.Thread(target=loop, daemon=True).start()
+
+    # ── Clock ─────────────────────────────────────────────────────────────
+
+    def _tick(self) -> None:
+        self._clock.configure(
+            text=datetime.datetime.now().strftime("%d.%m.%Y  %H:%M:%S"))
+        self.after(1000, self._tick)
+
+    # ── Welcome message ───────────────────────────────────────────────────
+
+    def _welcome(self) -> None:
+        self._add_bubble(
+            "Willkommen beim AI-gestützten IT Service Desk.\n\n"
+            "Beschreibe dein Problem — ich diagnostiziere und löse es Schritt für Schritt.\n"
+            "Nutze die Schnellaktionen links für häufige Anfragen.",
+            "agent",
+        )
+
+
+# ── Entry point ────────────────────────────────────────────────────────────
 
 def main() -> None:
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ERROR: ANTHROPIC_API_KEY nicht gesetzt. Bitte .env Datei prüfen.")
+        print("ERROR: ANTHROPIC_API_KEY nicht gesetzt.")
         return
-    app = ChatApp()
-    app.mainloop()
+    ServiceDeskApp().mainloop()
 
 
 if __name__ == "__main__":
